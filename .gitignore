@@ -1,0 +1,33 @@
+# Python
+**/.venv/
+**/__pycache__/
+*.pyc
+**/.pytest_cache/
+**/*.egg-info/
+
+# Env files (never commit real values; .env.example files are the templates)
+**/.env
+**/.env.local
+!**/.env.example
+
+# Node / Next.js
+web/node_modules/
+web/.next/
+web/out/
+*.tsbuildinfo
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!**/*.tfvars.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/

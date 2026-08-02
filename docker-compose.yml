@@ -1,0 +1,60 @@
+# Phase 0: infrastructure-only skeleton. core-api, the four Kafka/poller
+# services, the redpanda-topics bootstrap job, and the observability stack
+# (Prometheus/Grafana/Loki/Promtail/Tempo) are added in the phases that
+# introduce their code (see docs/phase0.md and the README phase table).
+#
+# name: pinned explicitly (rather than left to default to the checkout
+# directory name) so this project's containers never collide with or get
+# treated as orphans of an unrelated "meridian"-named Compose project that
+# may already exist on a dev machine.
+name: meridian-rebuild
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: meridian
+      POSTGRES_PASSWORD: meridian
+      POSTGRES_DB: meridian
+    ports:
+      - "5433:5432"
+    volumes:
+      - meridian_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meridian"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092,OUTSIDE://localhost:19092
+    ports:
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  meridian_pg_data:
