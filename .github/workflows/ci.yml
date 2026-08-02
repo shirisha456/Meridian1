@@ -6,13 +6,40 @@ on:
   pull_request:
 
 jobs:
-  foundation:
-    name: Repository foundation check
+  backend:
+    name: Backend tests + migration check
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/core-api
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: meridian
+          POSTGRES_PASSWORD: meridian
+          POSTGRES_DB: meridian
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U meridian"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://meridian:meridian@localhost:5432/meridian
+      ENVIRONMENT: test
     steps:
       - uses: actions/checkout@v4
-      - name: Confirm skeleton checks out
-        run: |
-          echo "Phase 0: repository foundation only."
-          echo "The backend, frontend, migration, and chaos-smoke-test jobs"
-          echo "are added in the phases that introduce their code."
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Alembic migrations apply against real Postgres
+        run: alembic upgrade head
+      - name: Run tests
+        run: pytest -v
+      - name: Lint
+        run: ruff check .

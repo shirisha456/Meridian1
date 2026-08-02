@@ -54,7 +54,7 @@ below for how each piece was built.
 ```
 meridian/
 ├── .github/workflows/     CI
-├── apps/core-api/         FastAPI backend (added Phase 1+)
+├── apps/core-api/         FastAPI backend — config, async DB, errors, health (Phase 1); domain modules added Phase 2+
 ├── services/               Independent Kafka consumers/pollers (added Phase 8+)
 ├── libs/events/             Shared event contracts (added Phase 7)
 ├── web/                    Next.js dashboard (added Phase 11)
@@ -72,7 +72,7 @@ meridian/
 | Phase | Scope | Status | Commit |
 |---|---|---|---|
 | 0 | Repository foundation | Complete | `chore: initialize Meridian monorepo and development tooling` |
-| 1 | Core API and persistence | Planned | |
+| 1 | Core API and persistence | Complete | `feat: establish core API and PostgreSQL persistence` |
 | 2 | Authentication and security | Planned | |
 | 3 | Accounts and transactions | Planned | |
 | 4 | Budgets, goals, and net worth | Planned | |
@@ -88,34 +88,55 @@ meridian/
 | 14 | Infrastructure and CI/CD | Planned | |
 | 15 | Portfolio documentation | Planned | |
 
-Each phase's design decisions and verification checklist: [`docs/phase0.md`](docs/phase0.md) (others added as their phases land).
+Each phase's design decisions and verification checklist:
+[`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md)
+(others added as their phases land).
 
 ## Local development setup
 
-Nothing is runnable as an application yet — Phase 0 only establishes the
-skeleton. What works today:
-
 ```bash
-docker compose config    # validates the infra-only compose file
-docker compose up -d     # starts Postgres, Redis, Redpanda
+cd apps/core-api
+python -m venv .venv
+.venv/Scripts/activate  # or source .venv/bin/activate on macOS/Linux
+pip install -e ".[dev]"
+cp .env.example .env
+
+docker compose up -d postgres   # or `docker compose up -d` for the full infra set
+alembic upgrade head            # no-op today — Phase 2 adds the first migration
+uvicorn app.main:app --reload
 ```
 
-Backend/frontend setup instructions are added in Phases 1 and 11
-respectively.
+`GET http://localhost:8000/live`, `/ready`, and `/health` should all
+respond. Frontend setup instructions are added in Phase 11.
 
 ## Environment variables
 
-Root `.env.example` covers only compose-level substitution today
-(`OPENAI_API_KEY`, `MARKET_DATA_API_KEY`). Per-app `.env.example` files are
-added as each app/service is introduced.
+- Root `.env.example` — compose-level substitution only (`OPENAI_API_KEY`,
+  `MARKET_DATA_API_KEY`)
+- `apps/core-api/.env.example` — `DATABASE_URL`, `ENVIRONMENT`, `LOG_LEVEL`,
+  `CORS_ORIGINS`. Grows as later phases add auth, Plaid, Redis, Kafka, and
+  OpenAI configuration.
 
 ## Database migrations
 
-Added in Phase 1 (Alembic).
+Alembic is wired up (`apps/core-api/alembic/`), running against a sync
+driver (`psycopg`) independent of the app's async runtime driver — see
+[ADR-0001](docs/adr/0001-async-sqlalchemy.md). No migrations exist yet;
+Phase 2 adds the first one (`users`, `refresh_tokens`).
+
+```bash
+cd apps/core-api
+alembic upgrade head
+alembic revision --autogenerate -m "description"
+```
 
 ## Backend test commands
 
-Added in Phase 1.
+```bash
+cd apps/core-api
+pytest -v          # 12 tests: health checks, error envelope, config
+ruff check .
+```
 
 ## Frontend commands
 
@@ -123,9 +144,12 @@ Added in Phase 11.
 
 ## Docker Compose instructions
 
-`docker-compose.yml` currently starts Postgres (`localhost:5433`), Redis
-(`localhost:6380`), and Redpanda (`localhost:19092`) — infrastructure only.
-Application services are added to this file in the phases that build them.
+`docker-compose.yml` (project name pinned to `meridian-rebuild` — see
+[`docs/phase0.md`](docs/phase0.md)) currently starts Postgres
+(`localhost:5433`), Redis (`localhost:6380`), Redpanda (`localhost:19092`),
+and `core-api` (`localhost:8000`, `alembic upgrade head` runs
+automatically on container start). The four Kafka/poller services and the
+observability stack are added in the phases that build them.
 
 ## Observability instructions
 
@@ -141,9 +165,11 @@ Added in Phase 2, documented fully in [`docs/security.md`](docs/security.md) (Ph
 
 ## CI/CD summary
 
-`.github/workflows/ci.yml` currently checks out the repository only. Backend
-tests, frontend checks, the Postgres migration check, and the gated chaos
-smoke test are added as the phases that introduce them land.
+`.github/workflows/ci.yml`'s `backend` job installs `apps/core-api`,
+runs `alembic upgrade head` against a real Postgres service container,
+runs `pytest`, and runs `ruff check .` — on every push to `main` and every
+pull request. Frontend checks and the gated chaos smoke test are added in
+the phases that introduce them.
 
 ## Infrastructure summary
 
@@ -151,9 +177,9 @@ Added in Phase 14.
 
 ## Known limitations
 
-Phase 0 is a skeleton — no application, no database schema, no tests beyond
-YAML/compose validation. This section will track real, current limitations
-starting once there's a real system to have limitations.
+No database schema exists yet (Phase 2 adds the first tables). No auth,
+no domain endpoints beyond health checks. The error-handling model and
+health-check split are the only behavior worth relying on so far.
 
 ## Future enhancements
 
@@ -161,8 +187,10 @@ Tracked per-phase; a consolidated list is added in Phase 15.
 
 ## Documentation links
 
-- [`docs/adr/`](docs/adr/) — architecture decision records (template only so far)
-- [`docs/phase0.md`](docs/phase0.md) — this phase's design notes and verification checklist
+- [`docs/adr/`](docs/adr/) — architecture decision records, including
+  [ADR-0001: async SQLAlchemy](docs/adr/0001-async-sqlalchemy.md)
+- [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md) —
+  per-phase design notes and verification checklists
 
 ## Demo instructions
 

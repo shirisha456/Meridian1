@@ -56,5 +56,19 @@ services:
       timeout: 5s
       retries: 10
 
+  core-api:
+    build: ./apps/core-api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://meridian:meridian@postgres:5432/meridian
+      ENVIRONMENT: development
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/core-api/app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   meridian_pg_data:

@@ -3,6 +3,7 @@
 **/__pycache__/
 *.pyc
 **/.pytest_cache/
+**/.ruff_cache/
 **/*.egg-info/
 
 # Env files (never commit real values; .env.example files are the templates)
