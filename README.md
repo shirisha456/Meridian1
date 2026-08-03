@@ -56,6 +56,14 @@ and anomaly detection don't block the request that created them.
   → `upgrade`, not just written and assumed to work) — caught and fixed
   a Postgres-native-enum cleanup bug this way, in both a new and an
   already-committed migration — see [`docs/phase6.md`](docs/phase6.md)
+- Transactional outbox with the publish-then-mark ordering bug fixed by
+  construction (a row is only marked published *after* Kafka confirms
+  delivery), and a Kafka client choice (`aiokafka`, not the sync
+  `confluent-kafka` SDK) that keeps the whole app async, not just the
+  HTTP layer — see [ADR-0005](docs/adr/0005-transactional-outbox.md),
+  [ADR-0006](docs/adr/0006-async-kafka-client.md); verified against a
+  real Redpanda broker, not just a fake producer — see
+  [`docs/phase7.md`](docs/phase7.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -76,6 +84,9 @@ actually implemented today versus planned._
 - Plaid bank linking: link-token creation, public-token exchange,
   encrypted access-token storage, cursor-based transaction sync with
   full `has_more` pagination (Phase 6)
+- Transactional outbox + a real Kafka event pipeline: every
+  uncategorized transaction publishes a `transactions.ingested` event,
+  verified landing on a real Redpanda topic (Phase 7)
 
 _More added as each phase lands._
 
@@ -103,7 +114,7 @@ meridian/
 ├── .github/workflows/     CI
 ├── apps/core-api/         FastAPI backend — config, async DB, errors, health (Phase 1); domain modules added Phase 2+
 ├── services/               Independent Kafka consumers/pollers (added Phase 8+)
-├── libs/events/             Shared event contracts (added Phase 7)
+├── libs/events/             Shared event contracts — a real installable package (Phase 7)
 ├── web/                    Next.js dashboard (added Phase 11)
 ├── docs/                   Architecture docs, case study, ADRs, per-phase notes
 ├── observability/          Prometheus/Grafana/Loki/Promtail/Tempo config (added Phase 12)
@@ -125,7 +136,7 @@ meridian/
 | 4 | Budgets, goals, and net worth | Complete | `feat: add budgeting goals and net worth tracking` |
 | 5 | Investments and market data | Complete | `feat: add investment portfolio and market data tracking` |
 | 6 | Plaid integration | Complete | `feat: integrate Plaid account linking and transaction sync` |
-| 7 | Transactional outbox and events | Planned | |
+| 7 | Transactional outbox and events | Complete | `feat: introduce transactional outbox and Kafka event contracts` |
 | 8 | Transaction enrichment | Planned | |
 | 9 | Anomaly detection and notifications | Planned | |
 | 10 | AI financial insights | Planned | |
@@ -139,7 +150,8 @@ Each phase's design decisions and verification checklist:
 [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
 [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
 [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
-[`docs/phase6.md`](docs/phase6.md) (others added as their phases land).
+[`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md)
+(others added as their phases land).
 
 ## Local development setup
 
@@ -147,14 +159,15 @@ Each phase's design decisions and verification checklist:
 cd apps/core-api
 python -m venv .venv
 .venv/Scripts/activate  # or source .venv/bin/activate on macOS/Linux
+pip install -e ../../libs/events   # shared event contracts — see docs/phase7.md
 pip install -e ".[dev]"
 cp .env.example .env
 
-docker compose up -d postgres redis   # or `docker compose up -d` for the full infra set
+docker compose up -d postgres redis redpanda redpanda-topics   # or `docker compose up -d` for everything
 alembic upgrade head                  # users, refresh_tokens, categories (seeded), accounts,
                                        # transactions, budgets, goals, net_worth_snapshots,
                                        # securities, security_prices, holdings, watchlist_items,
-                                       # institutions
+                                       # institutions, outbox_events
 uvicorn app.main:app --reload
 ```
 
@@ -174,8 +187,10 @@ Frontend setup instructions are added in Phase 11.
   see [`docs/phase5.md`](docs/phase5.md)), `PLAID_CLIENT_ID`/
   `PLAID_SECRET`/`PLAID_ENV` (optional), `ENCRYPTION_KEY` (required only
   once an institution is actually linked — see
-  [ADR-0003](docs/adr/0003-local-envelope-encryption-stand-in.md)).
-  Grows as later phases add Kafka and OpenAI configuration.
+  [ADR-0003](docs/adr/0003-local-envelope-encryption-stand-in.md)),
+  `KAFKA_BOOTSTRAP_SERVERS` (defaults to `localhost:19092`, matching
+  `docker-compose.yml`'s Redpanda port). Grows as later phases add
+  OpenAI configuration.
 
 ## Database migrations
 
@@ -187,10 +202,10 @@ see [`docs/phase3.md`](docs/phase3.md)) / `accounts` / `transactions`
 (Phase 3), `budgets` / `goals` / `net_worth_snapshots` (Phase 4),
 `securities` / `security_prices` / `holdings` / `watchlist_items`
 (Phase 5), `institutions` / `accounts.institution_id` /
-`accounts.plaid_account_id` (Phase 6). Full reversibility (`downgrade`
-all the way to base, then `upgrade` back to head) is verified, not just
-assumed — see [`docs/phase6.md`](docs/phase6.md) for a real bug this
-caught.
+`accounts.plaid_account_id` (Phase 6), `outbox_events` (Phase 7). Full
+reversibility (`downgrade` all the way to base, then `upgrade` back to
+head) is verified, not just assumed — see
+[`docs/phase6.md`](docs/phase6.md) for a real bug this caught.
 
 ```bash
 cd apps/core-api
@@ -202,8 +217,13 @@ alembic revision --autogenerate -m "description"
 
 ```bash
 cd apps/core-api
-pytest -v          # 92 tests: health, errors, config, auth/security, accounts, transactions,
-                   # idempotency, budgets, goals, net worth, investments, encryption, institutions
+pytest -v          # 98 tests: health, errors, config, auth/security, accounts, transactions,
+                   # idempotency, budgets, goals, net worth, investments, encryption,
+                   # institutions, outbox
+ruff check .
+
+cd ../../libs/events
+pytest -v          # 6 tests: event contract shapes, versioning, Topics
 ruff check .
 ```
 
@@ -216,10 +236,12 @@ Added in Phase 11.
 `docker-compose.yml` (project name pinned to `meridian-rebuild` — see
 [`docs/phase0.md`](docs/phase0.md)) currently starts Postgres
 (`localhost:5433`), Redis (`localhost:6380`), Redpanda (`localhost:19092`),
-and `core-api` (`localhost:8000`, depends on Postgres and Redis being
-healthy, `alembic upgrade head` runs automatically on container start).
-The four Kafka/poller services and the observability stack are added in
-the phases that build them.
+a one-shot `redpanda-topics` job that creates every topic in
+`meridian_events.Topics`, and `core-api` (`localhost:8000`, depends on
+Postgres/Redis being healthy and `redpanda-topics` completing
+successfully; `alembic upgrade head` runs automatically on container
+start). The four Kafka/poller consumer services and the observability
+stack are added in the phases that build them.
 
 ## Observability instructions
 
@@ -253,11 +275,16 @@ Documented fully in [`docs/security.md`](docs/security.md) (Phase 15).
 
 ## CI/CD summary
 
-`.github/workflows/ci.yml`'s `backend` job installs `apps/core-api`,
-runs `alembic upgrade head` against a real Postgres service container,
-runs `pytest`, and runs `ruff check .` — on every push to `main` and every
-pull request. Frontend checks and the gated chaos smoke test are added in
-the phases that introduce them.
+`.github/workflows/ci.yml` runs two jobs on every push to `main` and
+every pull request: `events-lib` (installs and tests `libs/events` on
+its own) and `backend` (installs `libs/events` then `apps/core-api`, runs
+`alembic upgrade head` against a real Postgres service container, runs
+`pytest`, runs `ruff check .`). Neither job spins up a Redpanda service
+container — the outbox/Kafka tests use a fake producer; the real-broker
+round-trip is verified manually each phase touching it (see
+[`docs/phase7.md`](docs/phase7.md)), matching the reference
+implementation's own CI scope. Frontend checks and the gated chaos smoke
+test are added in the phases that introduce them.
 
 ## Infrastructure summary
 
@@ -265,13 +292,15 @@ Added in Phase 14.
 
 ## Known limitations
 
-No rate limiting on `/login` or `/register` yet. No event pipeline or AI
-features exist yet — those are Phases 7-10. Market data is
-synchronous/on-demand, not the scheduled poller the reference
-implementation has — see [`docs/phase5.md`](docs/phase5.md) for why and
-when that changes. No Plaid webhook receiver — sync is user-triggered
-only (see [`docs/phase6.md`](docs/phase6.md)). The budgets-goals-networth
-upsert operations have a documented, accepted race condition under truly
+No rate limiting on `/login` or `/register` yet. No consumer services
+exist yet to actually process `transactions.ingested` — the outbox
+publishes it, but nothing subscribes until Phase 8 (enrichment). No AI
+features yet (Phase 10). Market data is synchronous/on-demand, not the
+scheduled poller the reference implementation has — see
+[`docs/phase5.md`](docs/phase5.md) for why and when that changes. No
+Plaid webhook receiver — sync is user-triggered only (see
+[`docs/phase6.md`](docs/phase6.md)). The budgets-goals-networth upsert
+operations have a documented, accepted race condition under truly
 concurrent identical requests (see [`docs/phase4.md`](docs/phase4.md)) —
 not a concern for this app's single-user-driven write pattern.
 
@@ -281,15 +310,19 @@ Tracked per-phase; a consolidated list is added in Phase 15.
 
 ## Documentation links
 
-- [`docs/adr/`](docs/adr/) — architecture decision records, including
-  [ADR-0001: async SQLAlchemy](docs/adr/0001-async-sqlalchemy.md),
-  [ADR-0002: fail-open Redis dependencies](docs/adr/0002-fail-open-redis-dependencies.md),
-  and [ADR-0003: local envelope encryption stand-in](docs/adr/0003-local-envelope-encryption-stand-in.md)
+- [`docs/adr/`](docs/adr/) — architecture decision records:
+  [0001](docs/adr/0001-async-sqlalchemy.md) async SQLAlchemy,
+  [0002](docs/adr/0002-fail-open-redis-dependencies.md) fail-open Redis,
+  [0003](docs/adr/0003-local-envelope-encryption-stand-in.md) envelope
+  encryption stand-in, [0004](docs/adr/0004-event-contract-versioning.md)
+  event versioning, [0005](docs/adr/0005-transactional-outbox.md)
+  transactional outbox, [0006](docs/adr/0006-async-kafka-client.md)
+  async Kafka client
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
   [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
   [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
-  [`docs/phase6.md`](docs/phase6.md) — per-phase design notes and
-  verification checklists
+  [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md) —
+  per-phase design notes and verification checklists
 
 ## Demo instructions
 

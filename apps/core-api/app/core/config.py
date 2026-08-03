@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # without it; only Plaid-linking endpoints need it.
     encryption_key: str = ""
 
+    kafka_bootstrap_servers: str = "localhost:19092"
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

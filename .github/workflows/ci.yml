@@ -6,6 +6,25 @@ on:
   pull_request:
 
 jobs:
+  events-lib:
+    name: Shared event contracts (libs/events)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/events
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Run tests
+        run: pytest -v
+      - name: Lint
+        run: ruff check .
+
   backend:
     name: Backend tests + migration check
     runs-on: ubuntu-latest
@@ -36,7 +55,13 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # libs/events first — apps/core-api's pyproject.toml deliberately
+        # doesn't declare it as a dependency (see that file's comment and
+        # docs/phase7.md); this monorepo has no workspace tool, so both
+        # packages are installed explicitly, in order.
+        run: |
+          pip install -e ../../libs/events
+          pip install -e ".[dev]"
       - name: Alembic migrations apply against real Postgres
         run: alembic upgrade head
       - name: Run tests

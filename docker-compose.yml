@@ -56,11 +56,34 @@ services:
       timeout: 5s
       retries: 10
 
+  # One-shot: creates every topic in meridian_events.Topics up front so
+  # core-api and (from Phase 8+) the consumer services never race a
+  # first-ever produce/consume against a topic that doesn't exist yet.
+  # Treats "already exists" as success so this is safe to re-run.
+  # NOTE: this list is hand-kept in sync with Topics.all() in
+  # libs/events/meridian_events/topics.py — there's no way to import
+  # Python into a shell command here, so a topic added there needs the
+  # same name added to this list by hand (the same tradeoff the
+  # reference implementation had at this exact boundary).
+  redpanda-topics:
+    image: redpandadata/redpanda:v24.2.7
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        rpk topic create transactions.ingested transactions.enriched alerts.raised insights.generated
+        --brokers redpanda:9092 --partitions 3 --replicas 1 || true
+
   core-api:
-    build: ./apps/core-api
+    build:
+      context: .
+      dockerfile: apps/core-api/Dockerfile
     environment:
       DATABASE_URL: postgresql+asyncpg://meridian:meridian@postgres:5432/meridian
       REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
       ENVIRONMENT: development
       CORS_ORIGINS: http://localhost:3000
     ports:
@@ -72,6 +95,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redpanda-topics:
+        condition: service_completed_successfully
 
 volumes:
   meridian_pg_data:

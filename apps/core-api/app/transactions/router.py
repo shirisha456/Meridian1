@@ -3,6 +3,7 @@ from uuid import UUID
 
 import redis.asyncio as redis
 from fastapi import APIRouter, Depends, Header, status
+from meridian_events import Topics, TransactionIngested
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from app.auth.models import User
 from app.core.cache import cache_delete_prefix
 from app.core.db import get_db
 from app.core.idempotency import cache_response, get_cached_response
+from app.core.outbox import write_outbox_event
 from app.core.ownership import get_owned
 from app.core.pagination import Page, Pagination
 from app.core.redis import get_redis
@@ -59,6 +61,27 @@ async def create_transaction(
 
     transaction = Transaction(**body.model_dump())
     db.add(transaction)
+
+    if transaction.category_id is None:
+        # Only uncategorized transactions need enrichment (Phase 8) — a
+        # manually-categorized one has nothing for that consumer to do.
+        await db.flush()  # assigns transaction.id without committing
+        event = TransactionIngested(
+            transaction_id=transaction.id,
+            account_id=transaction.account_id,
+            user_id=current_user.id,
+            merchant_name=transaction.merchant_name,
+            amount_minor=transaction.amount_minor,
+            currency=transaction.currency,
+            txn_date=transaction.txn_date,
+        )
+        write_outbox_event(
+            db,
+            topic=Topics.TRANSACTIONS_INGESTED,
+            key=str(transaction.account_id),
+            payload=event.model_dump(mode="json"),
+        )
+
     await db.commit()
     await db.refresh(transaction)
     await cache_delete_prefix(redis_client, f"budget_actual:{current_user.id}:")
