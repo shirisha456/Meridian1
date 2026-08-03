@@ -40,6 +40,11 @@ class Settings(BaseSettings):
 
     kafka_bootstrap_servers: str = "localhost:19092"
 
+    # Optional — degrades gracefully when unset (POST /insights/generate
+    # falls back to a deterministic template summary; see
+    # app/insights/service.py).
+    openai_api_key: str = ""
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

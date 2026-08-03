@@ -40,3 +40,14 @@ class ForbiddenError(AppError):
 class ServiceUnavailableError(AppError):
     status_code = 503
     error_type = "service_unavailable"
+
+
+class UnprocessableError(AppError):
+    """Distinct from Pydantic's own 422 (error_type="validation_error",
+    app/errors/handlers.py::validation_error_handler): this is for a
+    request that's syntactically valid but can't be fulfilled given the
+    current state of the data — e.g. generating an insight for a period
+    with no categorized spending to summarize."""
+
+    status_code = 422
+    error_type = "unprocessable"

@@ -18,6 +18,7 @@ from app.core.outbox_publisher import run_outbox_publisher_loop
 from app.errors import register_exception_handlers
 from app.goals.router import router as goals_router
 from app.health.router import router as health_router
+from app.insights.router import router as insights_router
 from app.institutions.router import router as institutions_router
 from app.investments.router import router as investments_router
 from app.networth.router import router as networth_router
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(institutions_router)
     app.include_router(alerts_router)
     app.include_router(notifications_router)
+    app.include_router(insights_router)
 
     return app
 

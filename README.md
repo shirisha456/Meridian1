@@ -82,6 +82,13 @@ and anomaly detection don't block the request that created them.
   browser-shaped WebSocket client receiving a live alert end-to-end
   through all four running services — see
   [`docs/phase9.md`](docs/phase9.md)
+- Grounded LLM summaries, not free-form generation: the model only ever
+  sees pre-computed spend aggregates, never raw transaction rows, and a
+  deterministic template fallback keeps the feature available even when
+  the LLM call fails or isn't configured — see
+  [ADR-0008](docs/adr/0008-grounded-insight-generation-with-fallback.md);
+  verified end-to-end including live delivery over the same WebSocket
+  pipeline Phase 9 built — see [`docs/phase10.md`](docs/phase10.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -112,6 +119,10 @@ actually implemented today versus planned._
   subscription price increases) with idempotent alert creation, and
   live push to the browser over a ticket-authenticated WebSocket
   (Phase 9)
+- Grounded monthly spending insights: real aggregation query, optional
+  OpenAI summary with a deterministic template fallback, published as an
+  event and delivered live over the existing WebSocket pipeline
+  (Phase 10)
 
 _More added as each phase lands._
 
@@ -167,7 +178,7 @@ meridian/
 | 7 | Transactional outbox and events | Complete | `feat: introduce transactional outbox and Kafka event contracts` |
 | 8 | Transaction enrichment | Complete | `feat: add asynchronous transaction enrichment pipeline` |
 | 9 | Anomaly detection and notifications | Complete | `feat: add anomaly detection and real-time alerts` |
-| 10 | AI financial insights | Planned | |
+| 10 | AI financial insights | Complete | `feat: add grounded monthly financial insights` |
 | 11 | Frontend | Planned | |
 | 12 | Observability | Planned | |
 | 13 | Resilience and chaos testing | Planned | |
@@ -179,7 +190,8 @@ Each phase's design decisions and verification checklist:
 [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
 [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
 [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
-[`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md)
+[`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
+[`docs/phase10.md`](docs/phase10.md)
 (others added as their phases land).
 
 ## Local development setup
@@ -196,7 +208,7 @@ docker compose up -d postgres redis redpanda redpanda-topics   # or `docker comp
 alembic upgrade head                  # users, refresh_tokens, categories (seeded), accounts,
                                        # transactions, budgets, goals, net_worth_snapshots,
                                        # securities, security_prices, holdings, watchlist_items,
-                                       # institutions, outbox_events
+                                       # institutions, outbox_events, alerts, insights
 uvicorn app.main:app --reload
 ```
 
@@ -232,7 +244,7 @@ see [`docs/phase3.md`](docs/phase3.md)) / `accounts` / `transactions`
 `securities` / `security_prices` / `holdings` / `watchlist_items`
 (Phase 5), `institutions` / `accounts.institution_id` /
 `accounts.plaid_account_id` (Phase 6), `outbox_events` (Phase 7),
-`alerts` (Phase 9). Full reversibility (`downgrade` all the way to base,
+`alerts` (Phase 9), `insights` (Phase 10). Full reversibility (`downgrade` all the way to base,
 then `upgrade` back to head) is verified, not just assumed, for every
 migration — see [`docs/phase6.md`](docs/phase6.md) for a real bug this
 caught.
@@ -247,9 +259,9 @@ alembic revision --autogenerate -m "description"
 
 ```bash
 cd apps/core-api
-pytest -v          # 108 tests: health, errors, config, auth/security, accounts, transactions,
+pytest -v          # 116 tests: health, errors, config, auth/security, accounts, transactions,
                    # idempotency, budgets, goals, net worth, investments, encryption,
-                   # institutions, outbox, alerts, ws-tickets
+                   # institutions, outbox, alerts, ws-tickets, insights
 ruff check .
 
 cd ../../libs/events
@@ -305,10 +317,16 @@ than erroring. When configured, sync is user-triggered (manual or at
 link time) — there's no webhook receiver yet, a documented gap, not a
 silent one.
 
-OpenAI (optional, `enrichment-service` — [`docs/phase8.md`](docs/phase8.md)):
-without `OPENAI_API_KEY`, categorization falls back to the rules engine
+OpenAI (optional — used in two independent places, each with its own
+fallback): in `enrichment-service` ([`docs/phase8.md`](docs/phase8.md)),
+without `OPENAI_API_KEY` categorization falls back to the rules engine
 only — a merchant the rules don't recognize is simply left uncategorized,
-never guessed. The Phase 10 insights feature follows the same contract.
+never guessed. In `core-api`'s insights feature
+([`docs/phase10.md`](docs/phase10.md),
+[ADR-0008](docs/adr/0008-grounded-insight-generation-with-fallback.md)),
+without `OPENAI_API_KEY` (or on any call failure) `POST /insights/generate`
+falls back to a deterministic template summary computed from the same
+real aggregates the AI prompt would have used — never a mock number.
 
 ## Security highlights
 
@@ -345,9 +363,12 @@ Added in Phase 14.
 
 ## Known limitations
 
-No rate limiting on `/login` or `/register` yet. No AI insights feature
-yet (Phase 10) — `enrichment-service`'s OpenAI fallback is categorization
-only. No dead-letter queue for any of the three Kafka-consuming
+No rate limiting on `/login` or `/register` yet. The insights feature's
+AI summary path (`ai_summary()`) has not been exercised against the real
+OpenAI API in this project — no key has been configured in any test or
+local environment used so far; only the deterministic template fallback
+has been verified end-to-end (see [`docs/phase10.md`](docs/phase10.md)).
+No dead-letter queue for any of the three Kafka-consuming
 services' message processing — a permanently malformed message is
 logged and skipped, an accepted, documented gap (see
 [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md)).
@@ -376,12 +397,15 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   event versioning, [0005](docs/adr/0005-transactional-outbox.md)
   transactional outbox, [0006](docs/adr/0006-async-kafka-client.md)
   async Kafka client, [0007](docs/adr/0007-service-extraction-boundaries.md)
-  service extraction boundaries
+  service extraction boundaries,
+  [0008](docs/adr/0008-grounded-insight-generation-with-fallback.md)
+  grounded insight generation with fallback
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
   [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
   [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
   [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
-  [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md) —
+  [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
+  [`docs/phase10.md`](docs/phase10.md) —
   per-phase design notes and verification checklists
 
 ## Demo instructions

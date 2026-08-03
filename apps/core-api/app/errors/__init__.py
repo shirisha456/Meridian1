@@ -5,6 +5,7 @@ from app.errors.exceptions import (
     NotFoundError,
     ServiceUnavailableError,
     UnauthorizedError,
+    UnprocessableError,
 )
 from app.errors.handlers import register_exception_handlers
 
@@ -15,5 +16,6 @@ __all__ = [
     "NotFoundError",
     "ServiceUnavailableError",
     "UnauthorizedError",
+    "UnprocessableError",
     "register_exception_handlers",
 ]
