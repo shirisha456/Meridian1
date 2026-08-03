@@ -25,12 +25,25 @@ and anomaly detection don't block the request that created them.
 
 ## Key engineering highlights
 
-_Filled in as each phase lands — see the phase table below for what's
+- Rotating refresh tokens with **theft/reuse detection**: a refresh token
+  presented twice (already used or already revoked) kills its entire
+  token family, not just itself — see
+  [ADR discussion in docs/phase2.md](docs/phase2.md)
+- Async SQLAlchemy 2.0 end-to-end, not sync calls threadpooled under
+  async routes — see [ADR-0001](docs/adr/0001-async-sqlalchemy.md)
+- One consistent error envelope for every failure path (deliberate,
+  validation, routing, and unhandled exceptions alike) — see
+  [`docs/phase1.md`](docs/phase1.md)
+
+_More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
 
 ## Major features
 
-_Filled in as each phase lands._
+- Email/password registration and login, Argon2id-hashed, JWT access
+  tokens + rotating refresh tokens (Phase 2)
+
+_More added as each phase lands._
 
 ## Architecture
 
@@ -73,7 +86,7 @@ meridian/
 |---|---|---|---|
 | 0 | Repository foundation | Complete | `chore: initialize Meridian monorepo and development tooling` |
 | 1 | Core API and persistence | Complete | `feat: establish core API and PostgreSQL persistence` |
-| 2 | Authentication and security | Planned | |
+| 2 | Authentication and security | Complete | `feat: add secure authentication and rotating sessions` |
 | 3 | Accounts and transactions | Planned | |
 | 4 | Budgets, goals, and net worth | Planned | |
 | 5 | Investments and market data | Planned | |
@@ -89,8 +102,8 @@ meridian/
 | 15 | Portfolio documentation | Planned | |
 
 Each phase's design decisions and verification checklist:
-[`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md)
-(others added as their phases land).
+[`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
+[`docs/phase2.md`](docs/phase2.md) (others added as their phases land).
 
 ## Local development setup
 
@@ -102,27 +115,30 @@ pip install -e ".[dev]"
 cp .env.example .env
 
 docker compose up -d postgres   # or `docker compose up -d` for the full infra set
-alembic upgrade head            # no-op today — Phase 2 adds the first migration
+alembic upgrade head            # creates users + refresh_tokens
 uvicorn app.main:app --reload
 ```
 
-`GET http://localhost:8000/live`, `/ready`, and `/health` should all
-respond. Frontend setup instructions are added in Phase 11.
+`GET http://localhost:8000/live`, `/ready`, `/health`, and
+`POST http://localhost:8000/api/v1/auth/register` should all respond.
+Frontend setup instructions are added in Phase 11.
 
 ## Environment variables
 
 - Root `.env.example` — compose-level substitution only (`OPENAI_API_KEY`,
   `MARKET_DATA_API_KEY`)
 - `apps/core-api/.env.example` — `DATABASE_URL`, `ENVIRONMENT`, `LOG_LEVEL`,
-  `CORS_ORIGINS`. Grows as later phases add auth, Plaid, Redis, Kafka, and
-  OpenAI configuration.
+  `CORS_ORIGINS`, `JWT_SECRET` (must be overridden outside development —
+  see `Settings.assert_safe_for_environment`), `JWT_ALGORITHM`,
+  `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`. Grows as
+  later phases add Plaid, Redis, Kafka, and OpenAI configuration.
 
 ## Database migrations
 
 Alembic is wired up (`apps/core-api/alembic/`), running against a sync
 driver (`psycopg`) independent of the app's async runtime driver — see
-[ADR-0001](docs/adr/0001-async-sqlalchemy.md). No migrations exist yet;
-Phase 2 adds the first one (`users`, `refresh_tokens`).
+[ADR-0001](docs/adr/0001-async-sqlalchemy.md). First migration
+(`users`, `refresh_tokens`) landed in Phase 2.
 
 ```bash
 cd apps/core-api
@@ -134,7 +150,7 @@ alembic revision --autogenerate -m "description"
 
 ```bash
 cd apps/core-api
-pytest -v          # 12 tests: health checks, error envelope, config
+pytest -v          # 35 tests: health, error envelope, config, auth/security
 ruff check .
 ```
 
@@ -161,7 +177,13 @@ Added in Phase 6 (Plaid) and Phase 10 (OpenAI).
 
 ## Security highlights
 
-Added in Phase 2, documented fully in [`docs/security.md`](docs/security.md) (Phase 15).
+Argon2id password hashing (explicit, OWASP-cited parameters — not library
+defaults), JWT access tokens (15 min), rotating refresh tokens with
+theft/reuse detection (a replayed already-used-or-revoked token kills its
+entire token family), refresh tokens stored only as a SHA-256 hash,
+HttpOnly/SameSite=lax cookies scoped to `/api/v1/auth`, and a startup
+guard that refuses to boot in production with the placeholder JWT secret.
+Documented fully in [`docs/security.md`](docs/security.md) (Phase 15).
 
 ## CI/CD summary
 
@@ -177,9 +199,9 @@ Added in Phase 14.
 
 ## Known limitations
 
-No database schema exists yet (Phase 2 adds the first tables). No auth,
-no domain endpoints beyond health checks. The error-handling model and
-health-check split are the only behavior worth relying on so far.
+No rate limiting on `/login` or `/register` yet (Redis isn't introduced
+until a later phase — tracked in [`docs/phase2.md`](docs/phase2.md)). No
+domain endpoints beyond auth and health checks exist yet.
 
 ## Future enhancements
 
@@ -189,8 +211,9 @@ Tracked per-phase; a consolidated list is added in Phase 15.
 
 - [`docs/adr/`](docs/adr/) — architecture decision records, including
   [ADR-0001: async SQLAlchemy](docs/adr/0001-async-sqlalchemy.md)
-- [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md) —
-  per-phase design notes and verification checklists
+- [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
+  [`docs/phase2.md`](docs/phase2.md) — per-phase design notes and
+  verification checklists
 
 ## Demo instructions
 

@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.auth.router import router as auth_router
 from app.core.config import get_settings
 from app.core.db import engine
 from app.core.logging import configure_logging
@@ -18,6 +19,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    settings.assert_safe_for_environment()
     configure_logging(settings)
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -33,6 +35,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health_router)
+    app.include_router(auth_router)
 
     return app
 

@@ -1,8 +1,10 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
+from app.core.db import Base, get_db
 from app.main import create_app
 
 
@@ -48,3 +50,37 @@ class BrokenSession:
 
 async def broken_db_session():
     yield BrokenSession()
+
+
+@pytest.fixture
+async def db_engine():
+    """A schema-backed in-memory SQLite database — one shared connection
+    per test (StaticPool), so every session in a test sees the same data
+    instead of each getting its own empty in-memory DB."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def authed_client(app, db_engine):
+    """An HTTP client wired to a real (schema-backed) database — for
+    exercising routes that actually read/write, like everything under
+    /api/v1/auth."""
+    session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
+
+    async def _get_db():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = _get_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+    app.dependency_overrides.clear()

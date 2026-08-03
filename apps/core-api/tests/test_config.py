@@ -1,3 +1,5 @@
+import pytest
+
 from app.core.config import Settings
 
 
@@ -19,3 +21,19 @@ def test_is_production_flag():
 def test_is_test_flag():
     assert Settings(environment="test").is_test is True
     assert Settings(environment="development").is_test is False
+
+
+def test_refuses_to_start_in_production_with_placeholder_jwt_secret():
+    settings = Settings(environment="production")  # jwt_secret left at its default
+    with pytest.raises(RuntimeError, match="JWT_SECRET"):
+        settings.assert_safe_for_environment()
+
+
+def test_allows_production_start_with_a_real_jwt_secret():
+    settings = Settings(environment="production", jwt_secret="a-real-random-secret-value")
+    settings.assert_safe_for_environment()  # must not raise
+
+
+def test_allows_development_start_with_placeholder_jwt_secret():
+    settings = Settings(environment="development")
+    settings.assert_safe_for_environment()  # must not raise outside production
