@@ -21,6 +21,10 @@ async def create_account(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Account:
+    # Note: net worth is a point-in-time snapshot written only by
+    # POST /networth/recompute, not derived live from account balances on
+    # every read — creating/editing an account has nothing to invalidate
+    # here; the next recompute picks up the new balance naturally.
     account = Account(user_id=current_user.id, **body.model_dump())
     db.add(account)
     await db.commit()

@@ -7,7 +7,10 @@ from sqlalchemy import engine_from_config, pool
 # that adds a domain module adds its import below.
 import app.accounts.models
 import app.auth.models
+import app.budgets.models
 import app.categories.models
+import app.goals.models
+import app.networth.models
 import app.transactions.models  # noqa: F401
 from alembic import context
 from app.core.config import get_settings

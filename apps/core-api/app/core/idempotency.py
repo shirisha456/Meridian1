@@ -1,11 +1,8 @@
-import json
-import logging
 from uuid import UUID
 
 import redis.asyncio as redis
-from redis.exceptions import RedisError
 
-logger = logging.getLogger(__name__)
+from app.core.cache import cache_get_json, cache_set_json
 
 IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
 
@@ -18,25 +15,8 @@ def _cache_key(user_id: UUID, idempotency_key: str) -> str:
 
 
 async def get_cached_response(redis_client: redis.Redis, user_id: UUID, key: str) -> dict | None:
-    """Fails open: a Redis outage is treated as a cache miss, not an
-    error. Idempotency here is a safety net against accidental client
-    retries creating duplicate manual transactions — a real but
-    recoverable annoyance in this domain, not a reason to make the whole
-    write path depend on Redis being up. See ADR-0002."""
-    try:
-        cached = await redis_client.get(_cache_key(user_id, key))
-    except RedisError:
-        logger.warning("Idempotency cache read failed; proceeding as a cache miss.", exc_info=True)
-        return None
-    return json.loads(cached) if cached else None
+    return await cache_get_json(redis_client, _cache_key(user_id, key))
 
 
 async def cache_response(redis_client: redis.Redis, user_id: UUID, key: str, response: dict) -> None:
-    try:
-        await redis_client.set(
-            _cache_key(user_id, key),
-            json.dumps(response, default=str),
-            ex=IDEMPOTENCY_TTL_SECONDS,
-        )
-    except RedisError:
-        logger.warning("Idempotency cache write failed; response was not cached.", exc_info=True)
+    await cache_set_json(redis_client, _cache_key(user_id, key), response, ttl_seconds=IDEMPOTENCY_TTL_SECONDS)

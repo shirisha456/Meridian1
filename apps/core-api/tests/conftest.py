@@ -1,3 +1,5 @@
+from collections.abc import AsyncGenerator
+
 import fakeredis.aioredis
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -99,13 +101,26 @@ async def db_engine():
 
 class BrokenRedis:
     """Stands in for an unreachable Redis — used to prove Redis-backed
-    features fail open rather than erroring (ADR-0002)."""
+    features fail open rather than erroring (ADR-0002). Implements every
+    method app/core/cache.py calls, each raising the same RedisError a
+    real client raises on a connection failure (not AttributeError,
+    which would test a scenario that can't happen against a real Redis)."""
 
     async def get(self, *args, **kwargs):
         raise RedisError("redis unreachable")
 
     async def set(self, *args, **kwargs):
         raise RedisError("redis unreachable")
+
+    async def delete(self, *args, **kwargs):
+        raise RedisError("redis unreachable")
+
+    def scan_iter(self, *args, **kwargs):
+        async def _raise() -> AsyncGenerator[str, None]:
+            raise RedisError("redis unreachable")
+            yield ""  # pragma: no cover - unreachable, makes this an async generator
+
+        return _raise()
 
 
 async def broken_redis():

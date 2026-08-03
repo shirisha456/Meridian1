@@ -40,6 +40,9 @@ and anomaly detection don't block the request that created them.
 - Idempotency-key protected transaction creation, Redis-backed, fails
   open on a Redis outage rather than blocking writes — see
   [ADR-0002](docs/adr/0002-fail-open-redis-dependencies.md)
+- Cache invalidation scoped to what a write actually affects, not
+  blanket invalidation of every plausibly-related key — see
+  [`docs/phase4.md`](docs/phase4.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -51,6 +54,9 @@ actually implemented today versus planned._
 - Manual financial accounts and transactions: paginated listing, merchant
   search, date-range filtering, idempotent creation, cross-user isolation
   (Phase 3)
+- Per-category monthly budgets with a real budget-vs-actual computation
+  (net of refunds, Redis-cached), savings goals, and net-worth snapshots
+  with type-based asset/liability classification (Phase 4)
 
 _More added as each phase lands._
 
@@ -97,7 +103,7 @@ meridian/
 | 1 | Core API and persistence | Complete | `feat: establish core API and PostgreSQL persistence` |
 | 2 | Authentication and security | Complete | `feat: add secure authentication and rotating sessions` |
 | 3 | Accounts and transactions | Complete | `feat: add accounts and idempotent transaction management` |
-| 4 | Budgets, goals, and net worth | Planned | |
+| 4 | Budgets, goals, and net worth | Complete | `feat: add budgeting goals and net worth tracking` |
 | 5 | Investments and market data | Planned | |
 | 6 | Plaid integration | Planned | |
 | 7 | Transactional outbox and events | Planned | |
@@ -112,8 +118,8 @@ meridian/
 
 Each phase's design decisions and verification checklist:
 [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
-[`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md)
-(others added as their phases land).
+[`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
+[`docs/phase4.md`](docs/phase4.md) (others added as their phases land).
 
 ## Local development setup
 
@@ -125,7 +131,8 @@ pip install -e ".[dev]"
 cp .env.example .env
 
 docker compose up -d postgres redis   # or `docker compose up -d` for the full infra set
-alembic upgrade head                  # creates users, refresh_tokens, categories (seeded), accounts, transactions
+alembic upgrade head                  # users, refresh_tokens, categories (seeded), accounts,
+                                       # transactions, budgets, goals, net_worth_snapshots
 uvicorn app.main:app --reload
 ```
 
@@ -151,7 +158,7 @@ driver (`psycopg`) independent of the app's async runtime driver — see
 [ADR-0001](docs/adr/0001-async-sqlalchemy.md). Migrations so far:
 `users`/`refresh_tokens` (Phase 2), `categories` (seeded, idempotently —
 see [`docs/phase3.md`](docs/phase3.md)) / `accounts` / `transactions`
-(Phase 3).
+(Phase 3), `budgets` / `goals` / `net_worth_snapshots` (Phase 4).
 
 ```bash
 cd apps/core-api
@@ -163,7 +170,8 @@ alembic revision --autogenerate -m "description"
 
 ```bash
 cd apps/core-api
-pytest -v          # 55 tests: health, errors, config, auth/security, accounts, transactions, idempotency
+pytest -v          # 67 tests: health, errors, config, auth/security, accounts, transactions,
+                   # idempotency, budgets, goals, net worth
 ruff check .
 ```
 
@@ -213,10 +221,12 @@ Added in Phase 14.
 
 ## Known limitations
 
-No rate limiting on `/login` or `/register` yet. No Plaid, budgets,
-goals, investments, net worth, event pipeline, or AI features exist yet
-— those are Phases 4-10. Manual accounts/transactions and auth are the
-full extent of what's real today.
+No rate limiting on `/login` or `/register` yet. No Plaid, investments,
+event pipeline, or AI features exist yet — those are Phases 5-10. The
+budgets-goals-networth upsert operations have a documented, accepted
+race condition under truly concurrent identical requests (see
+[`docs/phase4.md`](docs/phase4.md)) — not a concern for this app's
+single-user-driven write pattern.
 
 ## Future enhancements
 
@@ -228,8 +238,9 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   [ADR-0001: async SQLAlchemy](docs/adr/0001-async-sqlalchemy.md) and
   [ADR-0002: fail-open Redis dependencies](docs/adr/0002-fail-open-redis-dependencies.md)
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
-  [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md) —
-  per-phase design notes and verification checklists
+  [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
+  [`docs/phase4.md`](docs/phase4.md) — per-phase design notes and
+  verification checklists
 
 ## Demo instructions
 

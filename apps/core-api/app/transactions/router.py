@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.accounts.models import Account
 from app.auth.deps import get_current_user
 from app.auth.models import User
+from app.core.cache import cache_delete_prefix
 from app.core.db import get_db
 from app.core.idempotency import cache_response, get_cached_response
 from app.core.ownership import get_owned
@@ -60,6 +61,7 @@ async def create_transaction(
     db.add(transaction)
     await db.commit()
     await db.refresh(transaction)
+    await cache_delete_prefix(redis_client, f"budget_actual:{current_user.id}:")
 
     response = TransactionResponse.model_validate(transaction)
     if idempotency_key is not None:
@@ -121,12 +123,14 @@ async def update_transaction(
     body: TransactionUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis),
 ) -> Transaction:
     transaction = await _get_owned_transaction(db, transaction_id, current_user.id)
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(transaction, field, value)
     await db.commit()
     await db.refresh(transaction)
+    await cache_delete_prefix(redis_client, f"budget_actual:{current_user.id}:")
     return transaction
 
 
@@ -135,7 +139,9 @@ async def delete_transaction(
     transaction_id: UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis),
 ) -> None:
     transaction = await _get_owned_transaction(db, transaction_id, current_user.id)
     await db.delete(transaction)
     await db.commit()
+    await cache_delete_prefix(redis_client, f"budget_actual:{current_user.id}:")
