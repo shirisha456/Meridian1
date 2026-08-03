@@ -26,6 +26,18 @@ class Settings(BaseSettings):
     market_data_api_key: str = ""
     market_data_base_url: str = "https://api.twelvedata.com"
 
+    # Optional — degrades gracefully when unset (link-token creation and
+    # linking return 503; see app/institutions/plaid_client.py).
+    plaid_client_id: str = ""
+    plaid_secret: str = ""
+    plaid_env: str = "sandbox"
+
+    # Required only once institutions are actually linked — Fernet key
+    # for at-rest encryption of Plaid access tokens (ADR-0003). Empty by
+    # default so the app still boots and every other feature works
+    # without it; only Plaid-linking endpoints need it.
+    encryption_key: str = ""
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

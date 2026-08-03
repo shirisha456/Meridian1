@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 
 import fakeredis.aioredis
 import pytest
+from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -36,6 +37,10 @@ SEED_CATEGORY_NAMES = [
 @pytest.fixture(autouse=True)
 def _test_environment(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "test")
+    # A real (test-only) Fernet key so institutions endpoints don't hit
+    # EncryptionNotConfigured by default; test_encryption.py separately
+    # covers the unset-key path directly against Settings.
+    monkeypatch.setenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

@@ -13,6 +13,7 @@ from app.core.logging import configure_logging
 from app.errors import register_exception_handlers
 from app.goals.router import router as goals_router
 from app.health.router import router as health_router
+from app.institutions.router import router as institutions_router
 from app.investments.router import router as investments_router
 from app.networth.router import router as networth_router
 from app.transactions.router import router as transactions_router
@@ -50,6 +51,7 @@ def create_app() -> FastAPI:
     app.include_router(goals_router)
     app.include_router(networth_router)
     app.include_router(investments_router)
+    app.include_router(institutions_router)
 
     return app
 

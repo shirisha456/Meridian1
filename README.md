@@ -43,9 +43,19 @@ and anomaly detection don't block the request that created them.
 - Cache invalidation scoped to what a write actually affects, not
   blanket invalidation of every plausibly-related key — see
   [`docs/phase4.md`](docs/phase4.md)
-- Optional external integrations (market data today; Plaid, OpenAI later)
-  fail as a typed 503 via the shared error model, never a mock/synthetic
-  value standing in for real data — see [`docs/phase5.md`](docs/phase5.md)
+- Optional external integrations (market data, Plaid) fail as a typed
+  503 via the shared error model, never a mock/synthetic value standing
+  in for real data — see [`docs/phase5.md`](docs/phase5.md)
+- Plaid access tokens encrypted at rest (Fernet, a documented KMS
+  stand-in — [ADR-0003](docs/adr/0003-local-envelope-encryption-stand-in.md));
+  a real REST client instead of the official SDK specifically because
+  that SDK is synchronous and would violate ADR-0001; a `has_more` sync
+  loop and a `status=error` transition the reference implementation
+  didn't have — see [`docs/phase6.md`](docs/phase6.md)
+- Proved migration reversibility for real (`upgrade` → `downgrade base`
+  → `upgrade`, not just written and assumed to work) — caught and fixed
+  a Postgres-native-enum cleanup bug this way, in both a new and an
+  already-committed migration — see [`docs/phase6.md`](docs/phase6.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -63,6 +73,9 @@ actually implemented today versus planned._
 - Investment holdings and a watchlist (get-or-create by ticker symbol),
   with an on-demand price refresh against an optional market-data
   provider (Phase 5)
+- Plaid bank linking: link-token creation, public-token exchange,
+  encrypted access-token storage, cursor-based transaction sync with
+  full `has_more` pagination (Phase 6)
 
 _More added as each phase lands._
 
@@ -111,7 +124,7 @@ meridian/
 | 3 | Accounts and transactions | Complete | `feat: add accounts and idempotent transaction management` |
 | 4 | Budgets, goals, and net worth | Complete | `feat: add budgeting goals and net worth tracking` |
 | 5 | Investments and market data | Complete | `feat: add investment portfolio and market data tracking` |
-| 6 | Plaid integration | Planned | |
+| 6 | Plaid integration | Complete | `feat: integrate Plaid account linking and transaction sync` |
 | 7 | Transactional outbox and events | Planned | |
 | 8 | Transaction enrichment | Planned | |
 | 9 | Anomaly detection and notifications | Planned | |
@@ -125,8 +138,8 @@ meridian/
 Each phase's design decisions and verification checklist:
 [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
 [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
-[`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md)
-(others added as their phases land).
+[`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
+[`docs/phase6.md`](docs/phase6.md) (others added as their phases land).
 
 ## Local development setup
 
@@ -140,7 +153,8 @@ cp .env.example .env
 docker compose up -d postgres redis   # or `docker compose up -d` for the full infra set
 alembic upgrade head                  # users, refresh_tokens, categories (seeded), accounts,
                                        # transactions, budgets, goals, net_worth_snapshots,
-                                       # securities, security_prices, holdings, watchlist_items
+                                       # securities, security_prices, holdings, watchlist_items,
+                                       # institutions
 uvicorn app.main:app --reload
 ```
 
@@ -157,8 +171,11 @@ Frontend setup instructions are added in Phase 11.
   see `Settings.assert_safe_for_environment`), `JWT_ALGORITHM`,
   `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`,
   `REDIS_URL`, `MARKET_DATA_API_KEY`/`MARKET_DATA_BASE_URL` (optional —
-  see [`docs/phase5.md`](docs/phase5.md)). Grows as later phases add
-  Plaid, Kafka, and OpenAI configuration.
+  see [`docs/phase5.md`](docs/phase5.md)), `PLAID_CLIENT_ID`/
+  `PLAID_SECRET`/`PLAID_ENV` (optional), `ENCRYPTION_KEY` (required only
+  once an institution is actually linked — see
+  [ADR-0003](docs/adr/0003-local-envelope-encryption-stand-in.md)).
+  Grows as later phases add Kafka and OpenAI configuration.
 
 ## Database migrations
 
@@ -169,7 +186,11 @@ driver (`psycopg`) independent of the app's async runtime driver — see
 see [`docs/phase3.md`](docs/phase3.md)) / `accounts` / `transactions`
 (Phase 3), `budgets` / `goals` / `net_worth_snapshots` (Phase 4),
 `securities` / `security_prices` / `holdings` / `watchlist_items`
-(Phase 5).
+(Phase 5), `institutions` / `accounts.institution_id` /
+`accounts.plaid_account_id` (Phase 6). Full reversibility (`downgrade`
+all the way to base, then `upgrade` back to head) is verified, not just
+assumed — see [`docs/phase6.md`](docs/phase6.md) for a real bug this
+caught.
 
 ```bash
 cd apps/core-api
@@ -181,8 +202,8 @@ alembic revision --autogenerate -m "description"
 
 ```bash
 cd apps/core-api
-pytest -v          # 79 tests: health, errors, config, auth/security, accounts, transactions,
-                   # idempotency, budgets, goals, net worth, investments
+pytest -v          # 92 tests: health, errors, config, auth/security, accounts, transactions,
+                   # idempotency, budgets, goals, net worth, investments, encryption, institutions
 ruff check .
 ```
 
@@ -209,8 +230,14 @@ Added in Phase 12.
 Market data (Twelve Data, optional — [`docs/phase5.md`](docs/phase5.md)):
 without `MARKET_DATA_API_KEY`, `POST /investments/prices/refresh` returns
 a 503 and holdings/watchlist entries simply keep `latest_price_minor:
-null`, "no price yet" — never a mock/synthetic price. Plaid (Phase 6) and
-OpenAI (Phase 10) follow the same degrade-gracefully contract once built.
+null`, "no price yet" — never a mock/synthetic price.
+
+Plaid (optional — [`docs/phase6.md`](docs/phase6.md)): without
+`PLAID_CLIENT_ID`/`PLAID_SECRET`, `/institutions/link-token` and
+`POST /institutions` return 503; `GET /institutions` returns `[]` rather
+than erroring. When configured, sync is user-triggered (manual or at
+link time) — there's no webhook receiver yet, a documented gap, not a
+silent one. OpenAI (Phase 10) follows the same contract once built.
 
 ## Security highlights
 
@@ -218,8 +245,10 @@ Argon2id password hashing (explicit, OWASP-cited parameters — not library
 defaults), JWT access tokens (15 min), rotating refresh tokens with
 theft/reuse detection (a replayed already-used-or-revoked token kills its
 entire token family), refresh tokens stored only as a SHA-256 hash,
-HttpOnly/SameSite=lax cookies scoped to `/api/v1/auth`, and a startup
-guard that refuses to boot in production with the placeholder JWT secret.
+HttpOnly/SameSite=lax cookies scoped to `/api/v1/auth`, a startup guard
+that refuses to boot in production with the placeholder JWT secret, and
+Plaid access tokens encrypted at rest (Fernet, a documented KMS
+stand-in — [ADR-0003](docs/adr/0003-local-envelope-encryption-stand-in.md)).
 Documented fully in [`docs/security.md`](docs/security.md) (Phase 15).
 
 ## CI/CD summary
@@ -236,14 +265,15 @@ Added in Phase 14.
 
 ## Known limitations
 
-No rate limiting on `/login` or `/register` yet. No Plaid, event
-pipeline, or AI features exist yet — those are Phases 6-10. Market data
-is synchronous/on-demand, not the scheduled poller the reference
+No rate limiting on `/login` or `/register` yet. No event pipeline or AI
+features exist yet — those are Phases 7-10. Market data is
+synchronous/on-demand, not the scheduled poller the reference
 implementation has — see [`docs/phase5.md`](docs/phase5.md) for why and
-when that changes. The budgets-goals-networth upsert operations have a
-documented, accepted race condition under truly concurrent identical
-requests (see [`docs/phase4.md`](docs/phase4.md)) — not a concern for
-this app's single-user-driven write pattern.
+when that changes. No Plaid webhook receiver — sync is user-triggered
+only (see [`docs/phase6.md`](docs/phase6.md)). The budgets-goals-networth
+upsert operations have a documented, accepted race condition under truly
+concurrent identical requests (see [`docs/phase4.md`](docs/phase4.md)) —
+not a concern for this app's single-user-driven write pattern.
 
 ## Future enhancements
 
@@ -252,12 +282,14 @@ Tracked per-phase; a consolidated list is added in Phase 15.
 ## Documentation links
 
 - [`docs/adr/`](docs/adr/) — architecture decision records, including
-  [ADR-0001: async SQLAlchemy](docs/adr/0001-async-sqlalchemy.md) and
-  [ADR-0002: fail-open Redis dependencies](docs/adr/0002-fail-open-redis-dependencies.md)
+  [ADR-0001: async SQLAlchemy](docs/adr/0001-async-sqlalchemy.md),
+  [ADR-0002: fail-open Redis dependencies](docs/adr/0002-fail-open-redis-dependencies.md),
+  and [ADR-0003: local envelope encryption stand-in](docs/adr/0003-local-envelope-encryption-stand-in.md)
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
   [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
-  [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md) —
-  per-phase design notes and verification checklists
+  [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
+  [`docs/phase6.md`](docs/phase6.md) — per-phase design notes and
+  verification checklists
 
 ## Demo instructions
 

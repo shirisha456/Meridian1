@@ -95,6 +95,12 @@ def downgrade() -> None:
     op.drop_table('transactions')
     op.drop_index(op.f('ix_accounts_user_id'), table_name='accounts')
     op.drop_table('accounts')
+    # Postgres native ENUM types are separate objects from the table
+    # that used them — DROP TABLE does not drop them. Alembic's
+    # autogenerate doesn't add this automatically; found via an actual
+    # downgrade-then-upgrade test run in Phase 6, fixed here since
+    # upgrade() (already applied) is unaffected.
+    op.execute('DROP TYPE IF EXISTS account_type')
     op.drop_index(op.f('ix_categories_name'), table_name='categories')
     op.drop_table('categories')
     # ### end Alembic commands ###
