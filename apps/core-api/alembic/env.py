@@ -5,7 +5,10 @@ from sqlalchemy import engine_from_config, pool
 # Model modules are imported here (not in app/core/db.py) purely so their
 # tables register on Base.metadata before autogenerate runs. Each phase
 # that adds a domain module adds its import below.
-import app.auth.models  # noqa: F401
+import app.accounts.models
+import app.auth.models
+import app.categories.models
+import app.transactions.models  # noqa: F401
 from alembic import context
 from app.core.config import get_settings
 from app.core.db import Base

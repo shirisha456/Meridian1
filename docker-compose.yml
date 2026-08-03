@@ -60,6 +60,7 @@ services:
     build: ./apps/core-api
     environment:
       DATABASE_URL: postgresql+asyncpg://meridian:meridian@postgres:5432/meridian
+      REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
       CORS_ORIGINS: http://localhost:3000
     ports:
@@ -68,6 +69,8 @@ services:
       - ./apps/core-api/app:/app/app
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 volumes:

@@ -34,6 +34,12 @@ and anomaly detection don't block the request that created them.
 - One consistent error envelope for every failure path (deliberate,
   validation, routing, and unhandled exceptions alike) — see
   [`docs/phase1.md`](docs/phase1.md)
+- A per-account, DB-level unique constraint backing transaction dedupe
+  (the reference implementation's dedupe check was app-level-only and
+  had a real race condition) — see [`docs/phase3.md`](docs/phase3.md)
+- Idempotency-key protected transaction creation, Redis-backed, fails
+  open on a Redis outage rather than blocking writes — see
+  [ADR-0002](docs/adr/0002-fail-open-redis-dependencies.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -42,6 +48,9 @@ actually implemented today versus planned._
 
 - Email/password registration and login, Argon2id-hashed, JWT access
   tokens + rotating refresh tokens (Phase 2)
+- Manual financial accounts and transactions: paginated listing, merchant
+  search, date-range filtering, idempotent creation, cross-user isolation
+  (Phase 3)
 
 _More added as each phase lands._
 
@@ -87,7 +96,7 @@ meridian/
 | 0 | Repository foundation | Complete | `chore: initialize Meridian monorepo and development tooling` |
 | 1 | Core API and persistence | Complete | `feat: establish core API and PostgreSQL persistence` |
 | 2 | Authentication and security | Complete | `feat: add secure authentication and rotating sessions` |
-| 3 | Accounts and transactions | Planned | |
+| 3 | Accounts and transactions | Complete | `feat: add accounts and idempotent transaction management` |
 | 4 | Budgets, goals, and net worth | Planned | |
 | 5 | Investments and market data | Planned | |
 | 6 | Plaid integration | Planned | |
@@ -103,7 +112,8 @@ meridian/
 
 Each phase's design decisions and verification checklist:
 [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
-[`docs/phase2.md`](docs/phase2.md) (others added as their phases land).
+[`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md)
+(others added as their phases land).
 
 ## Local development setup
 
@@ -114,8 +124,8 @@ python -m venv .venv
 pip install -e ".[dev]"
 cp .env.example .env
 
-docker compose up -d postgres   # or `docker compose up -d` for the full infra set
-alembic upgrade head            # creates users + refresh_tokens
+docker compose up -d postgres redis   # or `docker compose up -d` for the full infra set
+alembic upgrade head                  # creates users, refresh_tokens, categories (seeded), accounts, transactions
 uvicorn app.main:app --reload
 ```
 
@@ -130,15 +140,18 @@ Frontend setup instructions are added in Phase 11.
 - `apps/core-api/.env.example` — `DATABASE_URL`, `ENVIRONMENT`, `LOG_LEVEL`,
   `CORS_ORIGINS`, `JWT_SECRET` (must be overridden outside development —
   see `Settings.assert_safe_for_environment`), `JWT_ALGORITHM`,
-  `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`. Grows as
-  later phases add Plaid, Redis, Kafka, and OpenAI configuration.
+  `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`,
+  `REDIS_URL`. Grows as later phases add Plaid, Kafka, and OpenAI
+  configuration.
 
 ## Database migrations
 
 Alembic is wired up (`apps/core-api/alembic/`), running against a sync
 driver (`psycopg`) independent of the app's async runtime driver — see
-[ADR-0001](docs/adr/0001-async-sqlalchemy.md). First migration
-(`users`, `refresh_tokens`) landed in Phase 2.
+[ADR-0001](docs/adr/0001-async-sqlalchemy.md). Migrations so far:
+`users`/`refresh_tokens` (Phase 2), `categories` (seeded, idempotently —
+see [`docs/phase3.md`](docs/phase3.md)) / `accounts` / `transactions`
+(Phase 3).
 
 ```bash
 cd apps/core-api
@@ -150,7 +163,7 @@ alembic revision --autogenerate -m "description"
 
 ```bash
 cd apps/core-api
-pytest -v          # 35 tests: health, error envelope, config, auth/security
+pytest -v          # 55 tests: health, errors, config, auth/security, accounts, transactions, idempotency
 ruff check .
 ```
 
@@ -163,9 +176,10 @@ Added in Phase 11.
 `docker-compose.yml` (project name pinned to `meridian-rebuild` — see
 [`docs/phase0.md`](docs/phase0.md)) currently starts Postgres
 (`localhost:5433`), Redis (`localhost:6380`), Redpanda (`localhost:19092`),
-and `core-api` (`localhost:8000`, `alembic upgrade head` runs
-automatically on container start). The four Kafka/poller services and the
-observability stack are added in the phases that build them.
+and `core-api` (`localhost:8000`, depends on Postgres and Redis being
+healthy, `alembic upgrade head` runs automatically on container start).
+The four Kafka/poller services and the observability stack are added in
+the phases that build them.
 
 ## Observability instructions
 
@@ -199,9 +213,10 @@ Added in Phase 14.
 
 ## Known limitations
 
-No rate limiting on `/login` or `/register` yet (Redis isn't introduced
-until a later phase — tracked in [`docs/phase2.md`](docs/phase2.md)). No
-domain endpoints beyond auth and health checks exist yet.
+No rate limiting on `/login` or `/register` yet. No Plaid, budgets,
+goals, investments, net worth, event pipeline, or AI features exist yet
+— those are Phases 4-10. Manual accounts/transactions and auth are the
+full extent of what's real today.
 
 ## Future enhancements
 
@@ -210,10 +225,11 @@ Tracked per-phase; a consolidated list is added in Phase 15.
 ## Documentation links
 
 - [`docs/adr/`](docs/adr/) — architecture decision records, including
-  [ADR-0001: async SQLAlchemy](docs/adr/0001-async-sqlalchemy.md)
+  [ADR-0001: async SQLAlchemy](docs/adr/0001-async-sqlalchemy.md) and
+  [ADR-0002: fail-open Redis dependencies](docs/adr/0002-fail-open-redis-dependencies.md)
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
-  [`docs/phase2.md`](docs/phase2.md) — per-phase design notes and
-  verification checklists
+  [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md) —
+  per-phase design notes and verification checklists
 
 ## Demo instructions
 
