@@ -71,6 +71,17 @@ and anomaly detection don't block the request that created them.
   end-to-end running the real consumer process against real Postgres,
   Redis, and Redpanda, not just a fake producer — see
   [`docs/phase8.md`](docs/phase8.md)
+- Fixed the reference implementation's most significant correctness bug:
+  `anomaly-service` wasn't actually idempotent despite its own ADR
+  claiming it was. A real `UNIQUE (source_event_id, alert_type)`
+  constraint now backs it — proven with a test that simulates message
+  redelivery and asserts no duplicate alert is created — see
+  [`docs/phase9.md`](docs/phase9.md)
+- A short-lived, single-use WebSocket ticket instead of putting the
+  long-lived access token in the connection URL — verified with a real
+  browser-shaped WebSocket client receiving a live alert end-to-end
+  through all four running services — see
+  [`docs/phase9.md`](docs/phase9.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -97,6 +108,10 @@ actually implemented today versus planned._
 - Automatic transaction categorization (rules engine + optional OpenAI
   fallback) and recurring-merchant detection, running as a standalone
   Kafka consumer service (Phase 8)
+- Real-time anomaly detection (duplicate charges, spend spikes,
+  subscription price increases) with idempotent alert creation, and
+  live push to the browser over a ticket-authenticated WebSocket
+  (Phase 9)
 
 _More added as each phase lands._
 
@@ -124,7 +139,9 @@ meridian/
 ├── .github/workflows/     CI
 ├── apps/core-api/         FastAPI backend — config, async DB, errors, health (Phase 1); domain modules added Phase 2+
 ├── services/
-│   └── enrichment-service/ Categorizes transactions.ingested → transactions.enriched (Phase 8)
+│   ├── enrichment-service/   Categorizes transactions.ingested → transactions.enriched (Phase 8)
+│   ├── anomaly-service/       Detects anomalies → alerts.raised, idempotent (Phase 9)
+│   └── notification-service/  Fans out alerts.raised/insights.generated → Redis pub/sub (Phase 9)
 ├── libs/events/             Shared event contracts — a real installable package (Phase 7)
 ├── web/                    Next.js dashboard (added Phase 11)
 ├── docs/                   Architecture docs, case study, ADRs, per-phase notes
@@ -149,7 +166,7 @@ meridian/
 | 6 | Plaid integration | Complete | `feat: integrate Plaid account linking and transaction sync` |
 | 7 | Transactional outbox and events | Complete | `feat: introduce transactional outbox and Kafka event contracts` |
 | 8 | Transaction enrichment | Complete | `feat: add asynchronous transaction enrichment pipeline` |
-| 9 | Anomaly detection and notifications | Planned | |
+| 9 | Anomaly detection and notifications | Complete | `feat: add anomaly detection and real-time alerts` |
 | 10 | AI financial insights | Planned | |
 | 11 | Frontend | Planned | |
 | 12 | Observability | Planned | |
@@ -162,7 +179,8 @@ Each phase's design decisions and verification checklist:
 [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
 [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
 [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
-[`docs/phase8.md`](docs/phase8.md) (others added as their phases land).
+[`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md)
+(others added as their phases land).
 
 ## Local development setup
 
@@ -213,10 +231,11 @@ see [`docs/phase3.md`](docs/phase3.md)) / `accounts` / `transactions`
 (Phase 3), `budgets` / `goals` / `net_worth_snapshots` (Phase 4),
 `securities` / `security_prices` / `holdings` / `watchlist_items`
 (Phase 5), `institutions` / `accounts.institution_id` /
-`accounts.plaid_account_id` (Phase 6), `outbox_events` (Phase 7). Full
-reversibility (`downgrade` all the way to base, then `upgrade` back to
-head) is verified, not just assumed — see
-[`docs/phase6.md`](docs/phase6.md) for a real bug this caught.
+`accounts.plaid_account_id` (Phase 6), `outbox_events` (Phase 7),
+`alerts` (Phase 9). Full reversibility (`downgrade` all the way to base,
+then `upgrade` back to head) is verified, not just assumed, for every
+migration — see [`docs/phase6.md`](docs/phase6.md) for a real bug this
+caught.
 
 ```bash
 cd apps/core-api
@@ -228,9 +247,9 @@ alembic revision --autogenerate -m "description"
 
 ```bash
 cd apps/core-api
-pytest -v          # 98 tests: health, errors, config, auth/security, accounts, transactions,
+pytest -v          # 108 tests: health, errors, config, auth/security, accounts, transactions,
                    # idempotency, budgets, goals, net worth, investments, encryption,
-                   # institutions, outbox
+                   # institutions, outbox, alerts, ws-tickets
 ruff check .
 
 cd ../../libs/events
@@ -239,6 +258,14 @@ ruff check .
 
 cd ../../services/enrichment-service
 pytest -v          # 24 tests: rules categorization, AI fallback, db access, full consumer flow
+ruff check .
+
+cd ../../services/anomaly-service
+pytest -v          # 17 tests: 3 detection rules, idempotent alert creation, multi-alert-per-event
+ruff check .
+
+cd ../../services/notification-service
+pytest -v          # 5 tests: topic-to-notification-type mapping, Redis pub/sub fan-out
 ruff check .
 ```
 
@@ -255,10 +282,10 @@ a one-shot `redpanda-topics` job that creates every topic in
 `meridian_events.Topics`, `core-api` (`localhost:8000`, depends on
 Postgres/Redis being healthy and `redpanda-topics` completing
 successfully; `alembic upgrade head` runs automatically on container
-start), and `enrichment-service` (no exposed port; its `/health` lives
-inside the container network only). The remaining Kafka/poller consumer
-services and the observability stack are added in the phases that build
-them.
+start), and `enrichment-service`, `anomaly-service`, and
+`notification-service` (no exposed ports; each `/health` lives inside
+the container network only). The observability stack is added in
+Phase 12.
 
 ## Observability instructions
 
@@ -297,19 +324,20 @@ Documented fully in [`docs/security.md`](docs/security.md) (Phase 15).
 
 ## CI/CD summary
 
-`.github/workflows/ci.yml` runs three jobs on every push to `main` and
+`.github/workflows/ci.yml` runs five jobs on every push to `main` and
 every pull request: `events-lib` (installs and tests `libs/events` on
 its own), `backend` (installs `libs/events` then `apps/core-api`, runs
 `alembic upgrade head` against a real Postgres service container, runs
-`pytest`, runs `ruff check .`), and `enrichment-service` (installs
-`libs/events` then itself, runs its own test suite and lint). None of
-the three spin up a real Redpanda service container — the outbox/Kafka
-tests all use a fake producer/consumer; the real-broker round-trip is
-verified manually each phase touching it (see
-[`docs/phase7.md`](docs/phase7.md), [`docs/phase8.md`](docs/phase8.md)),
-matching the reference implementation's own CI scope. Frontend checks
-and the gated chaos smoke test are added in the phases that introduce
-them.
+`pytest`, runs `ruff check .`), and `enrichment-service`,
+`anomaly-service`, `notification-service` (each installs `libs/events`
+then itself, runs its own test suite and lint). None of the five spin up
+a real Redpanda service container — the outbox/Kafka tests all use a
+fake producer/consumer; the real-broker round-trip (including, from
+Phase 9, all four services running simultaneously against real
+Postgres/Redis/Redpanda) is verified manually each phase touching it
+(see [`docs/phase7.md`](docs/phase7.md) onward), matching the reference
+implementation's own CI scope. Frontend checks and the gated chaos smoke
+test are added in the phases that introduce them.
 
 ## Infrastructure summary
 
@@ -317,18 +345,20 @@ Added in Phase 14.
 
 ## Known limitations
 
-No rate limiting on `/login` or `/register` yet. `transactions.enriched`
-has no consumer yet — that's Phase 9 (anomaly detection). No AI insights
-feature yet (Phase 10) — `enrichment-service`'s OpenAI fallback is
-categorization only. No dead-letter queue for `enrichment-service`'s
-Kafka consumption — a permanently malformed message is logged and
-skipped, an accepted, documented gap (see
-[`docs/phase8.md`](docs/phase8.md)). Market data is synchronous/on-demand,
-not the scheduled poller the reference implementation has — see
-[`docs/phase5.md`](docs/phase5.md) for why and when that changes. No
-Plaid webhook receiver — sync is user-triggered only (see
-[`docs/phase6.md`](docs/phase6.md)). The budgets-goals-networth upsert
-operations have a documented, accepted race condition under truly
+No rate limiting on `/login` or `/register` yet. No AI insights feature
+yet (Phase 10) — `enrichment-service`'s OpenAI fallback is categorization
+only. No dead-letter queue for any of the three Kafka-consuming
+services' message processing — a permanently malformed message is
+logged and skipped, an accepted, documented gap (see
+[`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md)).
+Redis Pub/Sub notifications have no persistence — a live alert missed
+while disconnected isn't redelivered over the WebSocket, though it's
+still visible via `GET /api/v1/alerts` (the system of record). Market
+data is synchronous/on-demand, not the scheduled poller the reference
+implementation has — see [`docs/phase5.md`](docs/phase5.md) for why and
+when that changes. No Plaid webhook receiver — sync is user-triggered
+only (see [`docs/phase6.md`](docs/phase6.md)). The budgets-goals-networth
+upsert operations have a documented, accepted race condition under truly
 concurrent identical requests (see [`docs/phase4.md`](docs/phase4.md)) —
 not a concern for this app's single-user-driven write pattern.
 
@@ -351,8 +381,8 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
   [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
   [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
-  [`docs/phase8.md`](docs/phase8.md) — per-phase design notes and
-  verification checklists
+  [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md) —
+  per-phase design notes and verification checklists
 
 ## Demo instructions
 

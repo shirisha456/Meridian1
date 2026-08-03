@@ -29,3 +29,8 @@ class TokenResponse(BaseModel):
 
 class AuthResponse(TokenResponse):
     user: UserResponse
+
+
+class WsTicketResponse(BaseModel):
+    ticket: str
+    expires_in_seconds: int

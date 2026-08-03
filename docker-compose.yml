@@ -116,5 +116,33 @@ services:
       redpanda-topics:
         condition: service_completed_successfully
 
+  anomaly-service:
+    build:
+      context: .
+      dockerfile: services/anomaly-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://meridian:meridian@postgres:5432/meridian
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      ENVIRONMENT: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda-topics:
+        condition: service_completed_successfully
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification-service/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      ENVIRONMENT: development
+    depends_on:
+      redis:
+        condition: service_healthy
+      redpanda-topics:
+        condition: service_completed_successfully
+
 volumes:
   meridian_pg_data:

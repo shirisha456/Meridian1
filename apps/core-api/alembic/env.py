@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool
 # tables register on Base.metadata before autogenerate runs. Each phase
 # that adds a domain module adds its import below.
 import app.accounts.models
+import app.alerts.models
 import app.auth.models
 import app.budgets.models
 import app.categories.models

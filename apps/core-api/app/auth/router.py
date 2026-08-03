@@ -1,3 +1,4 @@
+import redis.asyncio as redis
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,9 +11,12 @@ from app.auth.schemas import (
     RegisterRequest,
     TokenResponse,
     UserResponse,
+    WsTicketResponse,
 )
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.core.redis import get_redis
+from app.core.ws_tickets import TICKET_TTL_SECONDS, issue_ticket
 from app.errors import UnauthorizedError
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -92,3 +96,19 @@ async def logout(
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user)) -> UserResponse:
     return UserResponse.model_validate(current_user)
+
+
+@router.post("/ws-ticket", response_model=WsTicketResponse)
+async def create_ws_ticket(
+    current_user: User = Depends(get_current_user),
+    redis_client: redis.Redis = Depends(get_redis),
+) -> WsTicketResponse:
+    """A short-lived, single-use ticket for the WebSocket handshake
+    (app/notifications/router.py) — browsers can't set a custom
+    Authorization header on a WS connection, so *something* has to go in
+    the URL. Putting the long-lived access token there (the reference
+    implementation's approach) means it can end up in server/proxy
+    access logs; a 30-second, single-use ticket meaningfully narrows
+    that exposure instead of eliminating the constraint."""
+    ticket = await issue_ticket(redis_client, current_user.id)
+    return WsTicketResponse(ticket=ticket, expires_in_seconds=TICKET_TTL_SECONDS)

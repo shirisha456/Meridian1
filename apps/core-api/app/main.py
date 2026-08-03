@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.accounts.router import router as accounts_router
+from app.alerts.router import router as alerts_router
 from app.auth.router import router as auth_router
 from app.budgets.router import router as budgets_router
 from app.categories.router import router as categories_router
@@ -20,6 +21,7 @@ from app.health.router import router as health_router
 from app.institutions.router import router as institutions_router
 from app.investments.router import router as investments_router
 from app.networth.router import router as networth_router
+from app.notifications.router import router as notifications_router
 from app.transactions.router import router as transactions_router
 
 
@@ -70,6 +72,8 @@ def create_app() -> FastAPI:
     app.include_router(networth_router)
     app.include_router(investments_router)
     app.include_router(institutions_router)
+    app.include_router(alerts_router)
+    app.include_router(notifications_router)
 
     return app
 
