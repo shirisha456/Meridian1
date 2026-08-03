@@ -64,6 +64,13 @@ and anomaly detection don't block the request that created them.
   [ADR-0006](docs/adr/0006-async-kafka-client.md); verified against a
   real Redpanda broker, not just a fake producer — see
   [`docs/phase7.md`](docs/phase7.md)
+- The first independently deployable consumer service
+  (`enrichment-service`), with its own minimal-column-subset database
+  contract against a schema it doesn't own — see
+  [ADR-0007](docs/adr/0007-service-extraction-boundaries.md); verified
+  end-to-end running the real consumer process against real Postgres,
+  Redis, and Redpanda, not just a fake producer — see
+  [`docs/phase8.md`](docs/phase8.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -87,6 +94,9 @@ actually implemented today versus planned._
 - Transactional outbox + a real Kafka event pipeline: every
   uncategorized transaction publishes a `transactions.ingested` event,
   verified landing on a real Redpanda topic (Phase 7)
+- Automatic transaction categorization (rules engine + optional OpenAI
+  fallback) and recurring-merchant detection, running as a standalone
+  Kafka consumer service (Phase 8)
 
 _More added as each phase lands._
 
@@ -113,7 +123,8 @@ below for how each piece was built.
 meridian/
 ├── .github/workflows/     CI
 ├── apps/core-api/         FastAPI backend — config, async DB, errors, health (Phase 1); domain modules added Phase 2+
-├── services/               Independent Kafka consumers/pollers (added Phase 8+)
+├── services/
+│   └── enrichment-service/ Categorizes transactions.ingested → transactions.enriched (Phase 8)
 ├── libs/events/             Shared event contracts — a real installable package (Phase 7)
 ├── web/                    Next.js dashboard (added Phase 11)
 ├── docs/                   Architecture docs, case study, ADRs, per-phase notes
@@ -137,7 +148,7 @@ meridian/
 | 5 | Investments and market data | Complete | `feat: add investment portfolio and market data tracking` |
 | 6 | Plaid integration | Complete | `feat: integrate Plaid account linking and transaction sync` |
 | 7 | Transactional outbox and events | Complete | `feat: introduce transactional outbox and Kafka event contracts` |
-| 8 | Transaction enrichment | Planned | |
+| 8 | Transaction enrichment | Complete | `feat: add asynchronous transaction enrichment pipeline` |
 | 9 | Anomaly detection and notifications | Planned | |
 | 10 | AI financial insights | Planned | |
 | 11 | Frontend | Planned | |
@@ -150,8 +161,8 @@ Each phase's design decisions and verification checklist:
 [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
 [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
 [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
-[`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md)
-(others added as their phases land).
+[`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
+[`docs/phase8.md`](docs/phase8.md) (others added as their phases land).
 
 ## Local development setup
 
@@ -225,6 +236,10 @@ ruff check .
 cd ../../libs/events
 pytest -v          # 6 tests: event contract shapes, versioning, Topics
 ruff check .
+
+cd ../../services/enrichment-service
+pytest -v          # 24 tests: rules categorization, AI fallback, db access, full consumer flow
+ruff check .
 ```
 
 ## Frontend commands
@@ -237,11 +252,13 @@ Added in Phase 11.
 [`docs/phase0.md`](docs/phase0.md)) currently starts Postgres
 (`localhost:5433`), Redis (`localhost:6380`), Redpanda (`localhost:19092`),
 a one-shot `redpanda-topics` job that creates every topic in
-`meridian_events.Topics`, and `core-api` (`localhost:8000`, depends on
+`meridian_events.Topics`, `core-api` (`localhost:8000`, depends on
 Postgres/Redis being healthy and `redpanda-topics` completing
 successfully; `alembic upgrade head` runs automatically on container
-start). The four Kafka/poller consumer services and the observability
-stack are added in the phases that build them.
+start), and `enrichment-service` (no exposed port; its `/health` lives
+inside the container network only). The remaining Kafka/poller consumer
+services and the observability stack are added in the phases that build
+them.
 
 ## Observability instructions
 
@@ -259,7 +276,12 @@ Plaid (optional — [`docs/phase6.md`](docs/phase6.md)): without
 `POST /institutions` return 503; `GET /institutions` returns `[]` rather
 than erroring. When configured, sync is user-triggered (manual or at
 link time) — there's no webhook receiver yet, a documented gap, not a
-silent one. OpenAI (Phase 10) follows the same contract once built.
+silent one.
+
+OpenAI (optional, `enrichment-service` — [`docs/phase8.md`](docs/phase8.md)):
+without `OPENAI_API_KEY`, categorization falls back to the rules engine
+only — a merchant the rules don't recognize is simply left uncategorized,
+never guessed. The Phase 10 insights feature follows the same contract.
 
 ## Security highlights
 
@@ -275,16 +297,19 @@ Documented fully in [`docs/security.md`](docs/security.md) (Phase 15).
 
 ## CI/CD summary
 
-`.github/workflows/ci.yml` runs two jobs on every push to `main` and
+`.github/workflows/ci.yml` runs three jobs on every push to `main` and
 every pull request: `events-lib` (installs and tests `libs/events` on
-its own) and `backend` (installs `libs/events` then `apps/core-api`, runs
+its own), `backend` (installs `libs/events` then `apps/core-api`, runs
 `alembic upgrade head` against a real Postgres service container, runs
-`pytest`, runs `ruff check .`). Neither job spins up a Redpanda service
-container — the outbox/Kafka tests use a fake producer; the real-broker
-round-trip is verified manually each phase touching it (see
-[`docs/phase7.md`](docs/phase7.md)), matching the reference
-implementation's own CI scope. Frontend checks and the gated chaos smoke
-test are added in the phases that introduce them.
+`pytest`, runs `ruff check .`), and `enrichment-service` (installs
+`libs/events` then itself, runs its own test suite and lint). None of
+the three spin up a real Redpanda service container — the outbox/Kafka
+tests all use a fake producer/consumer; the real-broker round-trip is
+verified manually each phase touching it (see
+[`docs/phase7.md`](docs/phase7.md), [`docs/phase8.md`](docs/phase8.md)),
+matching the reference implementation's own CI scope. Frontend checks
+and the gated chaos smoke test are added in the phases that introduce
+them.
 
 ## Infrastructure summary
 
@@ -292,11 +317,14 @@ Added in Phase 14.
 
 ## Known limitations
 
-No rate limiting on `/login` or `/register` yet. No consumer services
-exist yet to actually process `transactions.ingested` — the outbox
-publishes it, but nothing subscribes until Phase 8 (enrichment). No AI
-features yet (Phase 10). Market data is synchronous/on-demand, not the
-scheduled poller the reference implementation has — see
+No rate limiting on `/login` or `/register` yet. `transactions.enriched`
+has no consumer yet — that's Phase 9 (anomaly detection). No AI insights
+feature yet (Phase 10) — `enrichment-service`'s OpenAI fallback is
+categorization only. No dead-letter queue for `enrichment-service`'s
+Kafka consumption — a permanently malformed message is logged and
+skipped, an accepted, documented gap (see
+[`docs/phase8.md`](docs/phase8.md)). Market data is synchronous/on-demand,
+not the scheduled poller the reference implementation has — see
 [`docs/phase5.md`](docs/phase5.md) for why and when that changes. No
 Plaid webhook receiver — sync is user-triggered only (see
 [`docs/phase6.md`](docs/phase6.md)). The budgets-goals-networth upsert
@@ -317,12 +345,14 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   encryption stand-in, [0004](docs/adr/0004-event-contract-versioning.md)
   event versioning, [0005](docs/adr/0005-transactional-outbox.md)
   transactional outbox, [0006](docs/adr/0006-async-kafka-client.md)
-  async Kafka client
+  async Kafka client, [0007](docs/adr/0007-service-extraction-boundaries.md)
+  service extraction boundaries
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
   [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
   [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
-  [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md) —
-  per-phase design notes and verification checklists
+  [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
+  [`docs/phase8.md`](docs/phase8.md) — per-phase design notes and
+  verification checklists
 
 ## Demo instructions
 

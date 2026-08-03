@@ -98,5 +98,23 @@ services:
       redpanda-topics:
         condition: service_completed_successfully
 
+  enrichment-service:
+    build:
+      context: .
+      dockerfile: services/enrichment-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://meridian:meridian@postgres:5432/meridian
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      ENVIRONMENT: development
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda-topics:
+        condition: service_completed_successfully
+
 volumes:
   meridian_pg_data:
