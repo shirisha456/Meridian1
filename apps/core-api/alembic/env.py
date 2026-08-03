@@ -10,6 +10,7 @@ import app.auth.models
 import app.budgets.models
 import app.categories.models
 import app.goals.models
+import app.investments.models
 import app.networth.models
 import app.transactions.models  # noqa: F401
 from alembic import context

@@ -43,6 +43,9 @@ and anomaly detection don't block the request that created them.
 - Cache invalidation scoped to what a write actually affects, not
   blanket invalidation of every plausibly-related key — see
   [`docs/phase4.md`](docs/phase4.md)
+- Optional external integrations (market data today; Plaid, OpenAI later)
+  fail as a typed 503 via the shared error model, never a mock/synthetic
+  value standing in for real data — see [`docs/phase5.md`](docs/phase5.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -57,6 +60,9 @@ actually implemented today versus planned._
 - Per-category monthly budgets with a real budget-vs-actual computation
   (net of refunds, Redis-cached), savings goals, and net-worth snapshots
   with type-based asset/liability classification (Phase 4)
+- Investment holdings and a watchlist (get-or-create by ticker symbol),
+  with an on-demand price refresh against an optional market-data
+  provider (Phase 5)
 
 _More added as each phase lands._
 
@@ -104,7 +110,7 @@ meridian/
 | 2 | Authentication and security | Complete | `feat: add secure authentication and rotating sessions` |
 | 3 | Accounts and transactions | Complete | `feat: add accounts and idempotent transaction management` |
 | 4 | Budgets, goals, and net worth | Complete | `feat: add budgeting goals and net worth tracking` |
-| 5 | Investments and market data | Planned | |
+| 5 | Investments and market data | Complete | `feat: add investment portfolio and market data tracking` |
 | 6 | Plaid integration | Planned | |
 | 7 | Transactional outbox and events | Planned | |
 | 8 | Transaction enrichment | Planned | |
@@ -119,7 +125,8 @@ meridian/
 Each phase's design decisions and verification checklist:
 [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
 [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
-[`docs/phase4.md`](docs/phase4.md) (others added as their phases land).
+[`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md)
+(others added as their phases land).
 
 ## Local development setup
 
@@ -132,7 +139,8 @@ cp .env.example .env
 
 docker compose up -d postgres redis   # or `docker compose up -d` for the full infra set
 alembic upgrade head                  # users, refresh_tokens, categories (seeded), accounts,
-                                       # transactions, budgets, goals, net_worth_snapshots
+                                       # transactions, budgets, goals, net_worth_snapshots,
+                                       # securities, security_prices, holdings, watchlist_items
 uvicorn app.main:app --reload
 ```
 
@@ -148,8 +156,9 @@ Frontend setup instructions are added in Phase 11.
   `CORS_ORIGINS`, `JWT_SECRET` (must be overridden outside development —
   see `Settings.assert_safe_for_environment`), `JWT_ALGORITHM`,
   `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`,
-  `REDIS_URL`. Grows as later phases add Plaid, Kafka, and OpenAI
-  configuration.
+  `REDIS_URL`, `MARKET_DATA_API_KEY`/`MARKET_DATA_BASE_URL` (optional —
+  see [`docs/phase5.md`](docs/phase5.md)). Grows as later phases add
+  Plaid, Kafka, and OpenAI configuration.
 
 ## Database migrations
 
@@ -158,7 +167,9 @@ driver (`psycopg`) independent of the app's async runtime driver — see
 [ADR-0001](docs/adr/0001-async-sqlalchemy.md). Migrations so far:
 `users`/`refresh_tokens` (Phase 2), `categories` (seeded, idempotently —
 see [`docs/phase3.md`](docs/phase3.md)) / `accounts` / `transactions`
-(Phase 3), `budgets` / `goals` / `net_worth_snapshots` (Phase 4).
+(Phase 3), `budgets` / `goals` / `net_worth_snapshots` (Phase 4),
+`securities` / `security_prices` / `holdings` / `watchlist_items`
+(Phase 5).
 
 ```bash
 cd apps/core-api
@@ -170,8 +181,8 @@ alembic revision --autogenerate -m "description"
 
 ```bash
 cd apps/core-api
-pytest -v          # 67 tests: health, errors, config, auth/security, accounts, transactions,
-                   # idempotency, budgets, goals, net worth
+pytest -v          # 79 tests: health, errors, config, auth/security, accounts, transactions,
+                   # idempotency, budgets, goals, net worth, investments
 ruff check .
 ```
 
@@ -195,7 +206,11 @@ Added in Phase 12.
 
 ## External integration behavior
 
-Added in Phase 6 (Plaid) and Phase 10 (OpenAI).
+Market data (Twelve Data, optional — [`docs/phase5.md`](docs/phase5.md)):
+without `MARKET_DATA_API_KEY`, `POST /investments/prices/refresh` returns
+a 503 and holdings/watchlist entries simply keep `latest_price_minor:
+null`, "no price yet" — never a mock/synthetic price. Plaid (Phase 6) and
+OpenAI (Phase 10) follow the same degrade-gracefully contract once built.
 
 ## Security highlights
 
@@ -221,12 +236,14 @@ Added in Phase 14.
 
 ## Known limitations
 
-No rate limiting on `/login` or `/register` yet. No Plaid, investments,
-event pipeline, or AI features exist yet — those are Phases 5-10. The
-budgets-goals-networth upsert operations have a documented, accepted
-race condition under truly concurrent identical requests (see
-[`docs/phase4.md`](docs/phase4.md)) — not a concern for this app's
-single-user-driven write pattern.
+No rate limiting on `/login` or `/register` yet. No Plaid, event
+pipeline, or AI features exist yet — those are Phases 6-10. Market data
+is synchronous/on-demand, not the scheduled poller the reference
+implementation has — see [`docs/phase5.md`](docs/phase5.md) for why and
+when that changes. The budgets-goals-networth upsert operations have a
+documented, accepted race condition under truly concurrent identical
+requests (see [`docs/phase4.md`](docs/phase4.md)) — not a concern for
+this app's single-user-driven write pattern.
 
 ## Future enhancements
 
@@ -239,8 +256,8 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   [ADR-0002: fail-open Redis dependencies](docs/adr/0002-fail-open-redis-dependencies.md)
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
   [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
-  [`docs/phase4.md`](docs/phase4.md) — per-phase design notes and
-  verification checklists
+  [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md) —
+  per-phase design notes and verification checklists
 
 ## Demo instructions
 

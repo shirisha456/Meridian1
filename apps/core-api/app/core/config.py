@@ -21,6 +21,11 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6380/0"
 
+    # Optional — degrades gracefully when unset (holdings/watchlist
+    # entries simply keep latest_price_minor=null, "no price yet").
+    market_data_api_key: str = ""
+    market_data_base_url: str = "https://api.twelvedata.com"
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
