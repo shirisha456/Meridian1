@@ -89,6 +89,18 @@ and anomaly detection don't block the request that created them.
   [ADR-0008](docs/adr/0008-grounded-insight-generation-with-fallback.md);
   verified end-to-end including live delivery over the same WebSocket
   pipeline Phase 9 built — see [`docs/phase10.md`](docs/phase10.md)
+- The frontend was studied against the actual rebuilt backend before a
+  line of it was written, catching real mismatches the reference never
+  hit against this API: bare-array assumptions that would crash against
+  the backend's real `Page[T]` responses, a request field name that
+  didn't match the schema, and a hardcoded WebSocket auth pattern the
+  backend was specifically redesigned to close off (Phase 9's ticket
+  flow) — see [`docs/phase11.md`](docs/phase11.md)
+- Two real bugs caught and fixed during frontend verification, not
+  glossed over: a session that silently dropped on every page reload,
+  and closed dialogs/selects that never actually unmounted — see
+  [ADR-0009](docs/adr/0009-no-popup-close-animations.md) and
+  [`docs/phase11.md`](docs/phase11.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -123,6 +135,12 @@ actually implemented today versus planned._
   OpenAI summary with a deterministic template fallback, published as an
   event and delivered live over the existing WebSocket pipeline
   (Phase 10)
+- A Next.js dashboard covering every backend feature above — accounts
+  (with edit/delete and a currency selector), transactions (search,
+  filtering, pagination, delete), budgets (with a real month picker),
+  goals (create/edit/delete), investments (holdings, watchlist, price
+  refresh), net worth, Plaid linking, and live alerts/insights over the
+  ticket-authenticated WebSocket (Phase 11)
 
 _More added as each phase lands._
 
@@ -154,7 +172,7 @@ meridian/
 │   ├── anomaly-service/       Detects anomalies → alerts.raised, idempotent (Phase 9)
 │   └── notification-service/  Fans out alerts.raised/insights.generated → Redis pub/sub (Phase 9)
 ├── libs/events/             Shared event contracts — a real installable package (Phase 7)
-├── web/                    Next.js dashboard (added Phase 11)
+├── web/                    Next.js dashboard — TanStack Query, Zustand, Base UI (Phase 11)
 ├── docs/                   Architecture docs, case study, ADRs, per-phase notes
 ├── observability/          Prometheus/Grafana/Loki/Promtail/Tempo config (added Phase 12)
 ├── infra/                  Terraform + Helm (added Phase 14)
@@ -179,7 +197,7 @@ meridian/
 | 8 | Transaction enrichment | Complete | `feat: add asynchronous transaction enrichment pipeline` |
 | 9 | Anomaly detection and notifications | Complete | `feat: add anomaly detection and real-time alerts` |
 | 10 | AI financial insights | Complete | `feat: add grounded monthly financial insights` |
-| 11 | Frontend | Planned | |
+| 11 | Frontend | Complete | `feat: add Next.js dashboard frontend` |
 | 12 | Observability | Planned | |
 | 13 | Resilience and chaos testing | Planned | |
 | 14 | Infrastructure and CI/CD | Planned | |
@@ -191,7 +209,7 @@ Each phase's design decisions and verification checklist:
 [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
 [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
 [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
-[`docs/phase10.md`](docs/phase10.md)
+[`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md)
 (others added as their phases land).
 
 ## Local development setup
@@ -214,7 +232,16 @@ uvicorn app.main:app --reload
 
 `GET http://localhost:8000/live`, `/ready`, `/health`, and
 `POST http://localhost:8000/api/v1/auth/register` should all respond.
-Frontend setup instructions are added in Phase 11.
+
+```bash
+cd web
+npm install
+cp .env.local.example .env.local   # NEXT_PUBLIC_API_URL=http://localhost:8000
+npm run dev
+```
+
+`http://localhost:3000` should redirect to `/login`; register a user and
+the dashboard should load real data from the backend above.
 
 ## Environment variables
 
@@ -283,7 +310,17 @@ ruff check .
 
 ## Frontend commands
 
-Added in Phase 11.
+```bash
+cd web
+npm run dev         # local dev server, http://localhost:3000
+npm run build        # production build — typechecks and lints as part of the build
+npm run typecheck    # tsc --noEmit
+npm run lint          # eslint .
+```
+
+No automated test suite yet (matches the reference — see
+[`docs/phase11.md`](docs/phase11.md)); verification for this phase was
+manual, against the real backend and a real browser.
 
 ## Docker Compose instructions
 
@@ -342,20 +379,23 @@ Documented fully in [`docs/security.md`](docs/security.md) (Phase 15).
 
 ## CI/CD summary
 
-`.github/workflows/ci.yml` runs five jobs on every push to `main` and
+`.github/workflows/ci.yml` runs six jobs on every push to `main` and
 every pull request: `events-lib` (installs and tests `libs/events` on
 its own), `backend` (installs `libs/events` then `apps/core-api`, runs
 `alembic upgrade head` against a real Postgres service container, runs
-`pytest`, runs `ruff check .`), and `enrichment-service`,
+`pytest`, runs `ruff check .`), `enrichment-service`,
 `anomaly-service`, `notification-service` (each installs `libs/events`
-then itself, runs its own test suite and lint). None of the five spin up
-a real Redpanda service container — the outbox/Kafka tests all use a
-fake producer/consumer; the real-broker round-trip (including, from
-Phase 9, all four services running simultaneously against real
-Postgres/Redis/Redpanda) is verified manually each phase touching it
-(see [`docs/phase7.md`](docs/phase7.md) onward), matching the reference
-implementation's own CI scope. Frontend checks and the gated chaos smoke
-test are added in the phases that introduce them.
+then itself, runs its own test suite and lint), and `frontend`
+(`npm ci`, `tsc --noEmit`, `eslint .`, `npm run build` — no test suite
+yet, matching the reference; see [`docs/phase11.md`](docs/phase11.md)).
+None of the five backend jobs spin up a real Redpanda service
+container — the outbox/Kafka tests all use a fake producer/consumer;
+the real-broker round-trip (including, from Phase 9, all four services
+running simultaneously against real Postgres/Redis/Redpanda) is
+verified manually each phase touching it (see
+[`docs/phase7.md`](docs/phase7.md) onward), matching the reference
+implementation's own CI scope. The gated chaos smoke test is added in
+the phase that introduces it.
 
 ## Infrastructure summary
 
@@ -381,7 +421,15 @@ when that changes. No Plaid webhook receiver — sync is user-triggered
 only (see [`docs/phase6.md`](docs/phase6.md)). The budgets-goals-networth
 upsert operations have a documented, accepted race condition under truly
 concurrent identical requests (see [`docs/phase4.md`](docs/phase4.md)) —
-not a concern for this app's single-user-driven write pattern.
+not a concern for this app's single-user-driven write pattern. The
+frontend has no automated test suite yet (matches the reference) and no
+CSS open/close animations on any dialog/popover/select — a deliberate
+tradeoff, not an oversight, made after those animations turned out to
+break popups actually closing; see
+[ADR-0009](docs/adr/0009-no-popup-close-animations.md). Money is
+formatted in a fixed `en-US` locale regardless of an account's actual
+currency — correct for USD, cosmetically off for others (see
+[`docs/phase11.md`](docs/phase11.md)).
 
 ## Future enhancements
 
@@ -399,13 +447,15 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   async Kafka client, [0007](docs/adr/0007-service-extraction-boundaries.md)
   service extraction boundaries,
   [0008](docs/adr/0008-grounded-insight-generation-with-fallback.md)
-  grounded insight generation with fallback
+  grounded insight generation with fallback,
+  [0009](docs/adr/0009-no-popup-close-animations.md) no popup close
+  animations
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
   [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
   [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
   [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
   [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
-  [`docs/phase10.md`](docs/phase10.md) —
+  [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md) —
   per-phase design notes and verification checklists
 
 ## Demo instructions

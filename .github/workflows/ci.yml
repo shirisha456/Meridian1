@@ -131,3 +131,29 @@ jobs:
         run: pytest -v
       - name: Lint
         run: ruff check .
+
+  frontend:
+    name: Frontend build, typecheck, lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        # No NEXT_PUBLIC_API_URL set here — this only needs to prove the
+        # app compiles and typechecks, not reach a real backend; that's
+        # covered manually per-phase (see docs/phase11.md), same scope
+        # boundary as this CI's Redpanda-round-trip gap for the backend.
+        run: npm run build
