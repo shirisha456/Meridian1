@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Account, AccountType
 from app.core.encryption import decrypt, encrypt
+from app.core.metrics import transactions_created_total
 from app.institutions.models import Institution, InstitutionStatus
 from app.institutions.plaid_client import (
     PlaidAccount,
@@ -179,6 +180,7 @@ async def _upsert_transaction(db: AsyncSession, institution: Institution, plaid_
     )
     db.add(transaction)
     await db.commit()
+    transactions_created_total.labels(source="plaid_sync").inc()
     return 1
 
 

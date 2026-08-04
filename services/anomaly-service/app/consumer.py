@@ -5,13 +5,21 @@ from meridian_events import AlertRaised, Topics, TransactionEnriched, to_json_by
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db import alert_exists, insert_alert
+from app.metrics import alerts_raised_total
 from app.rules import ALL_RULES
+from app.tracing import inject_trace_headers
 
 logger = logging.getLogger(__name__)
 
 
 class KafkaProducer(Protocol):
-    async def send_and_wait(self, topic: str, value: bytes, key: bytes | None = None) -> None: ...
+    async def send_and_wait(
+        self,
+        topic: str,
+        value: bytes,
+        key: bytes | None = None,
+        headers: list[tuple[str, bytes]] | None = None,
+    ) -> None: ...
 
 
 async def process_message(
@@ -65,9 +73,14 @@ async def process_message(
                 detail=candidate.detail,
                 related_transaction_id=candidate.related_transaction_id,
             )
+            trace_headers = inject_trace_headers()
             await producer.send_and_wait(
-                Topics.ALERTS_RAISED, value=to_json_bytes(alert_event), key=str(event.user_id).encode()
+                Topics.ALERTS_RAISED,
+                value=to_json_bytes(alert_event),
+                key=str(event.user_id).encode(),
+                headers=[(k, v.encode()) for k, v in trace_headers.items()] or None,
             )
+            alerts_raised_total.labels(alert_type=candidate.alert_type).inc()
             raised += 1
 
     return raised

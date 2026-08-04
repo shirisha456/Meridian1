@@ -13,6 +13,7 @@ from app.auth.models import User
 from app.core.cache import cache_delete_prefix
 from app.core.db import get_db
 from app.core.idempotency import cache_response, get_cached_response
+from app.core.metrics import transactions_created_total
 from app.core.outbox import write_outbox_event
 from app.core.ownership import get_owned
 from app.core.pagination import Page, Pagination
@@ -85,6 +86,7 @@ async def create_transaction(
     await db.commit()
     await db.refresh(transaction)
     await cache_delete_prefix(redis_client, f"budget_actual:{current_user.id}:")
+    transactions_created_total.labels(source="api").inc()
 
     response = TransactionResponse.model_validate(transaction)
     if idempotency_key is not None:

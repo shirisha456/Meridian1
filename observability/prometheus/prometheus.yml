@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: core-api
+    static_configs:
+      - targets: ["core-api:8000"]
+
+  # The three workers each serve /metrics from the same minimal
+  # http.server that already serves /health (app/health.py in each
+  # service) — one port per worker doing both jobs, rather than a
+  # separate bare prometheus_client.start_http_server with no health
+  # endpoint alongside it.
+  - job_name: enrichment-service
+    static_configs:
+      - targets: ["enrichment-service:8080"]
+
+  - job_name: anomaly-service
+    static_configs:
+      - targets: ["anomaly-service:8081"]
+
+  - job_name: notification-service
+    static_configs:
+      - targets: ["notification-service:8082"]

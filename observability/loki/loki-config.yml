@@ -1,0 +1,40 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+limits_config:
+  # Every service now emits structured JSON with a trace_id/span_id
+  # field when tracing is active (see apps/core-api/app/core/logging.py
+  # and the equivalent in each of the three workers) — allow_structured_metadata
+  # plus Promtail's json pipeline stage below lets those fields become
+  # queryable labels/fields in LogQL rather than only reachable via
+  # full-text grep.
+  allow_structured_metadata: true
+  retention_period: 168h # 7 days — fine for local dev, not a durability guarantee

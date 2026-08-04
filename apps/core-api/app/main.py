@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.accounts.router import router as accounts_router
 from app.alerts.router import router as alerts_router
@@ -15,6 +16,7 @@ from app.core.db import AsyncSessionLocal, engine
 from app.core.kafka import stop_kafka_producer
 from app.core.logging import configure_logging
 from app.core.outbox_publisher import run_outbox_publisher_loop
+from app.core.tracing import setup_tracing
 from app.errors import register_exception_handlers
 from app.goals.router import router as goals_router
 from app.health.router import router as health_router
@@ -62,6 +64,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Always on (unlike tracing below) — /metrics costs nothing to expose
+    # and every environment benefits from request-rate/latency numbers,
+    # not just ones with the observability stack running.
+    Instrumentator().instrument(app).expose(app)
+    setup_tracing(app, engine.sync_engine, settings)
 
     app.include_router(health_router)
     app.include_router(auth_router)

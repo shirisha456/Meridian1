@@ -3,9 +3,28 @@ import logging
 import sys
 from datetime import UTC, datetime
 
+from opentelemetry import trace
+
 from app.core.config import Settings
 
 _RESERVED_LOG_RECORD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", None, None).__dict__)
+
+
+class TraceContextFilter(logging.Filter):
+    """Injects trace_id/span_id into every log record when a span is
+    currently active, so Loki log lines can be correlated with the Tempo
+    trace that produced them (the reference implementation wired up a
+    Tempo→Loki datasource link in Grafana with nothing to actually filter
+    on — no log line anywhere carried a trace_id — making that link
+    non-functional; see docs/adr/0010)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        span = trace.get_current_span()
+        context = span.get_span_context()
+        if context.is_valid:
+            record.trace_id = format(context.trace_id, "032x")
+            record.span_id = format(context.span_id, "016x")
+        return True
 
 
 class JsonFormatter(logging.Formatter):
@@ -39,11 +58,20 @@ def configure_logging(settings: Settings) -> None:
     root.handlers.clear()
 
     handler = logging.StreamHandler(sys.stdout)
-    if settings.environment == "development":
+    # A real terminal (a developer running `uvicorn --reload` by hand)
+    # gets human-readable output; anything else — Docker Compose,
+    # `pytest`, a container orchestrator — gets JSON. This is keyed off
+    # whether stdout is a TTY rather than `environment == "development"`
+    # alone, because `docker compose up` runs with ENVIRONMENT=development
+    # too (it's not "production"), but its stdout is captured by the
+    # Docker daemon for Promtail/Loki to ship, not read by a human
+    # directly — it needs the structured form.
+    if settings.environment == "development" and sys.stdout.isatty():
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     else:
         handler.setFormatter(JsonFormatter())
 
+    handler.addFilter(TraceContextFilter())
     root.addHandler(handler)
 
     # uvicorn installs its own handlers on these loggers; defer to the root

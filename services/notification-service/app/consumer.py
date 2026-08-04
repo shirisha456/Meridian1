@@ -4,6 +4,8 @@ import logging
 import redis.asyncio as redis
 from meridian_events import Topics
 
+from app.metrics import forwarded_total
+
 logger = logging.getLogger(__name__)
 
 # Imports Topics rather than spelling out topic strings a second time —
@@ -46,4 +48,5 @@ async def process_message(topic: str, payload: bytes, redis_client: redis.Redis)
     # no one is subscribed (dashboard closed) is simply lost. Acceptable
     # for a live-update nicety; not the system of record (GET /alerts is).
     await redis_client.publish(f"notifications:{user_id}", json.dumps(notification))
+    forwarded_total.labels(type=notification["type"]).inc()
     return True

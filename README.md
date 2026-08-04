@@ -101,6 +101,16 @@ and anomaly detection don't block the request that created them.
   and closed dialogs/selects that never actually unmounted — see
   [ADR-0009](docs/adr/0009-no-popup-close-animations.md) and
   [`docs/phase11.md`](docs/phase11.md)
+- The entire ingest → enrich → detect-anomalies → notify pipeline
+  traces as one connected request in Tempo, not four separate ones — a
+  W3C traceparent is hand-carried through the outbox and Kafka message
+  headers at every hop, since Kafka has no built-in trace propagation
+  the way HTTP middleware does. Fixed a gap the reference had even with
+  its own Grafana trace-to-logs link wired up: no log line anywhere
+  carried a trace_id, so that link had nothing to correlate — this
+  rebuild's structured JSON logs do, verified with real trace and log
+  data pulled directly from Tempo's and Loki's own APIs, not just
+  code review — see [`docs/phase12.md`](docs/phase12.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -141,6 +151,10 @@ actually implemented today versus planned._
   goals (create/edit/delete), investments (holdings, watchlist, price
   refresh), net worth, Plaid linking, and live alerts/insights over the
   ticket-authenticated WebSocket (Phase 11)
+- Distributed tracing (OpenTelemetry → Tempo), metrics (Prometheus,
+  scraped from all four backend services), and structured JSON logs
+  (Loki via Promtail), pre-wired in Grafana with a working dashboard and
+  a functional trace-to-logs correlation (Phase 12)
 
 _More added as each phase lands._
 
@@ -174,7 +188,7 @@ meridian/
 ├── libs/events/             Shared event contracts — a real installable package (Phase 7)
 ├── web/                    Next.js dashboard — TanStack Query, Zustand, Base UI (Phase 11)
 ├── docs/                   Architecture docs, case study, ADRs, per-phase notes
-├── observability/          Prometheus/Grafana/Loki/Promtail/Tempo config (added Phase 12)
+├── observability/          Prometheus/Grafana/Loki/Promtail/Tempo config (Phase 12)
 ├── infra/                  Terraform + Helm (added Phase 14)
 ├── chaos/                  Chaos/recovery tests (added Phase 13)
 ├── deploy/                 Production compose, nginx, backup/restore scripts (added Phase 14)
@@ -198,7 +212,7 @@ meridian/
 | 9 | Anomaly detection and notifications | Complete | `feat: add anomaly detection and real-time alerts` |
 | 10 | AI financial insights | Complete | `feat: add grounded monthly financial insights` |
 | 11 | Frontend | Complete | `feat: add Next.js dashboard frontend` |
-| 12 | Observability | Planned | |
+| 12 | Observability | Complete | `feat: add tracing metrics and log aggregation` |
 | 13 | Resilience and chaos testing | Planned | |
 | 14 | Infrastructure and CI/CD | Planned | |
 | 15 | Portfolio documentation | Planned | |
@@ -209,7 +223,8 @@ Each phase's design decisions and verification checklist:
 [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
 [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
 [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
-[`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md)
+[`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md),
+[`docs/phase12.md`](docs/phase12.md)
 (others added as their phases land).
 
 ## Local development setup
@@ -271,7 +286,10 @@ see [`docs/phase3.md`](docs/phase3.md)) / `accounts` / `transactions`
 `securities` / `security_prices` / `holdings` / `watchlist_items`
 (Phase 5), `institutions` / `accounts.institution_id` /
 `accounts.plaid_account_id` (Phase 6), `outbox_events` (Phase 7),
-`alerts` (Phase 9), `insights` (Phase 10). Full reversibility (`downgrade` all the way to base,
+`alerts` (Phase 9), `insights` (Phase 10),
+`outbox_events.trace_headers` (Phase 12, distributed trace propagation
+through Kafka — see [ADR-0010](docs/adr/0010-direct-otlp-export-no-collector.md)).
+Full reversibility (`downgrade` all the way to base,
 then `upgrade` back to head) is verified, not just assumed, for every
 migration — see [`docs/phase6.md`](docs/phase6.md) for a real bug this
 caught.
@@ -325,20 +343,45 @@ manual, against the real backend and a real browser.
 ## Docker Compose instructions
 
 `docker-compose.yml` (project name pinned to `meridian-rebuild` — see
-[`docs/phase0.md`](docs/phase0.md)) currently starts Postgres
-(`localhost:5433`), Redis (`localhost:6380`), Redpanda (`localhost:19092`),
-a one-shot `redpanda-topics` job that creates every topic in
+[`docs/phase0.md`](docs/phase0.md)) starts Postgres (`localhost:5433`),
+Redis (`localhost:6380`), Redpanda (`localhost:19092`), a one-shot
+`redpanda-topics` job that creates every topic in
 `meridian_events.Topics`, `core-api` (`localhost:8000`, depends on
 Postgres/Redis being healthy and `redpanda-topics` completing
 successfully; `alembic upgrade head` runs automatically on container
-start), and `enrichment-service`, `anomaly-service`, and
-`notification-service` (no exposed ports; each `/health` lives inside
-the container network only). The observability stack is added in
-Phase 12.
+start), `enrichment-service`, `anomaly-service`, and
+`notification-service` (each exposes its `/health` + `/metrics` port —
+8080/8081/8082 respectively — inside the container network only, not
+published to the host), and the observability stack below.
 
 ## Observability instructions
 
-Added in Phase 12.
+```bash
+docker compose up -d tempo prometheus loki promtail grafana
+```
+
+- **Grafana** — `http://localhost:3001` (anonymous Admin access, no
+  login — a local-dev-only setting, see
+  [`docs/phase12.md`](docs/phase12.md)). The "Meridian — Pipeline
+  Overview" dashboard is provisioned automatically; Prometheus, Loki,
+  and Tempo are pre-wired as datasources.
+- **Prometheus** — `http://localhost:9090`; scrapes `core-api:8000` and
+  each worker's health-server port.
+- **Tempo** — `http://localhost:3200` (query API); its OTLP/http
+  receiver (`:4318`) is also published to the host so a service run
+  outside Docker can still export traces.
+- **Loki** — no host port published; reachable only via Grafana's
+  proxied datasource or from another container on the compose network
+  (matches the reference's own design).
+
+Tracing is opt-in per service via `OTEL_EXPORTER_OTLP_ENDPOINT`
+(pre-set to `http://tempo:4318` for all four app services in
+`docker-compose.yml`; empty by default outside Docker, so a plain
+`pytest` run or a bare `uvicorn --reload` never depends on Tempo being
+up). See [`docs/phase12.md`](docs/phase12.md) and
+[ADR-0010](docs/adr/0010-direct-otlp-export-no-collector.md) for the
+full design, and that same doc's verification checklist for a real,
+traced request walked end-to-end through Tempo and Loki.
 
 ## External integration behavior
 
@@ -429,7 +472,11 @@ break popups actually closing; see
 [ADR-0009](docs/adr/0009-no-popup-close-animations.md). Money is
 formatted in a fixed `en-US` locale regardless of an account's actual
 currency — correct for USD, cosmetically off for others (see
-[`docs/phase11.md`](docs/phase11.md)).
+[`docs/phase11.md`](docs/phase11.md)). No OpenTelemetry Collector, no
+Prometheus alerting rules, and Grafana runs with anonymous Admin access
+— all deliberate, local-dev-scoped tradeoffs, not oversights; see
+[`docs/phase12.md`](docs/phase12.md) and
+[ADR-0010](docs/adr/0010-direct-otlp-export-no-collector.md).
 
 ## Future enhancements
 
@@ -449,13 +496,16 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   [0008](docs/adr/0008-grounded-insight-generation-with-fallback.md)
   grounded insight generation with fallback,
   [0009](docs/adr/0009-no-popup-close-animations.md) no popup close
-  animations
+  animations,
+  [0010](docs/adr/0010-direct-otlp-export-no-collector.md) direct OTLP
+  export, no Collector
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
   [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
   [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
   [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
   [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
-  [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md) —
+  [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md),
+  [`docs/phase12.md`](docs/phase12.md) —
   per-phase design notes and verification checklists
 
 ## Demo instructions

@@ -1,0 +1,115 @@
+{
+  "uid": "meridian-overview",
+  "title": "Meridian — Pipeline Overview",
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "core-api request rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"core-api\"}[1m])) by (handler, status)",
+          "legendFormat": "{{handler}} {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "core-api request latency (p95)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"core-api\"}[5m])) by (le, handler))",
+          "legendFormat": "{{handler}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Transactions created / min, by source",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(meridian_transactions_created_total[1m])) by (source) * 60",
+          "legendFormat": "{{source}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Alerts raised / min, by type",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(meridian_anomaly_alerts_raised_total[1m])) by (alert_type) * 60",
+          "legendFormat": "{{alert_type}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Pending outbox events",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "targets": [{ "expr": "meridian_outbox_pending", "legendFormat": "pending" }]
+    },
+    {
+      "id": 6,
+      "title": "enrichment-service throughput vs errors",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "rate(meridian_enrichment_processed_total[1m]) * 60", "legendFormat": "processed/min" },
+        { "expr": "rate(meridian_enrichment_errors_total[1m]) * 60", "legendFormat": "errors/min" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "anomaly-service throughput vs errors",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "targets": [
+        { "expr": "rate(meridian_anomaly_processed_total[1m]) * 60", "legendFormat": "processed/min" },
+        { "expr": "rate(meridian_anomaly_errors_total[1m]) * 60", "legendFormat": "errors/min" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "notification-service forwarded / min, by type",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(meridian_notification_forwarded_total[1m])) by (type) * 60",
+          "legendFormat": "{{type}}"
+        },
+        { "expr": "rate(meridian_notification_errors_total[1m]) * 60", "legendFormat": "errors/min" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Recent logs, all services",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "targets": [{ "expr": "{service=~\".+\"}" }],
+      "options": { "showTime": true, "wrapLogMessage": true }
+    }
+  ]
+}

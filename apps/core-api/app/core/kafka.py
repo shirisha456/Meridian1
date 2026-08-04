@@ -9,7 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 class KafkaProducer(Protocol):
-    async def send_and_wait(self, topic: str, value: bytes, key: bytes | None = None) -> None: ...
+    async def send_and_wait(
+        self,
+        topic: str,
+        value: bytes,
+        key: bytes | None = None,
+        headers: list[tuple[str, bytes]] | None = None,
+    ) -> None: ...
 
 
 _producer: AIOKafkaProducer | None = None

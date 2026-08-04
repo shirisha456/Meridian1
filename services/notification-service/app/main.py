@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import sys
 
 import redis.asyncio as redis
 from aiokafka import AIOKafkaConsumer
@@ -9,22 +8,18 @@ from meridian_events import Topics
 from app.config import get_settings
 from app.consumer import process_message
 from app.health import start_health_server
+from app.logging_config import configure_logging
+from app.metrics import errors_total
+from app.tracing import continue_trace, setup_tracing
 
 logger = logging.getLogger(__name__)
 
 
-def configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=level.upper(),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stdout,
-    )
-
-
 async def run() -> None:
     settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, settings.environment)
     start_health_server(settings.health_check_port)
+    setup_tracing(settings)
 
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
 
@@ -47,10 +42,12 @@ async def run() -> None:
     try:
         async for message in consumer:
             try:
-                await process_message(message.topic, message.value, redis_client)
+                with continue_trace("notification-service.process", message.headers):
+                    await process_message(message.topic, message.value, redis_client)
             except Exception:
                 # No dead-letter topic yet — same documented tradeoff as
                 # enrichment-service and anomaly-service.
+                errors_total.inc()
                 logger.exception(
                     "Failed to process message at offset %d on %s; skipping.",
                     message.offset,

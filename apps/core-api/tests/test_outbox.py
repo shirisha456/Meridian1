@@ -8,13 +8,13 @@ from app.core.outbox_publisher import publish_pending_outbox_events
 
 class FakeKafkaProducer:
     def __init__(self, fail_topics: set[str] | None = None):
-        self.sent: list[tuple[str, bytes, bytes | None]] = []
+        self.sent: list[tuple[str, bytes, bytes | None, list[tuple[str, bytes]] | None]] = []
         self.fail_topics = fail_topics or set()
 
-    async def send_and_wait(self, topic, value, key=None):
+    async def send_and_wait(self, topic, value, key=None, headers=None):
         if topic in self.fail_topics:
             raise RuntimeError("simulated broker failure")
-        self.sent.append((topic, value, key))
+        self.sent.append((topic, value, key, headers))
 
 
 @pytest.fixture

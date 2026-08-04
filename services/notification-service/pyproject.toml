@@ -9,6 +9,10 @@ dependencies = [
     "aiokafka>=0.11",
     "redis>=5.1",
     "pydantic-settings>=2.6",
+    "prometheus-client>=0.21",
+    "opentelemetry-api>=1.29",
+    "opentelemetry-sdk>=1.29",
+    "opentelemetry-exporter-otlp-proto-http>=1.29",
 ]
 
 [project.optional-dependencies]

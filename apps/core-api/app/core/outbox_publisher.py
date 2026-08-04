@@ -2,10 +2,11 @@ import asyncio
 import json
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.kafka import KafkaProducer, get_kafka_producer
+from app.core.metrics import outbox_pending
 from app.core.outbox import OutboxEvent
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ async def publish_pending_outbox_events(
                 row.topic,
                 value=json.dumps(row.payload).encode(),
                 key=row.key.encode() if row.key else None,
+                headers=[(k, v.encode()) for k, v in row.trace_headers.items()] or None,
             )
         except Exception:
             logger.exception(
@@ -68,6 +70,10 @@ async def run_outbox_publisher_loop(session_factory: async_sessionmaker[AsyncSes
                 count = await publish_pending_outbox_events(db, producer)
                 if count:
                     logger.info("Published %d outbox event(s).", count)
+                remaining = await db.scalar(
+                    select(func.count()).select_from(OutboxEvent).where(OutboxEvent.published.is_(False))
+                )
+                outbox_pending.set(remaining or 0)
         except asyncio.CancelledError:
             raise
         except Exception:

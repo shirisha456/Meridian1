@@ -13,10 +13,10 @@ from app.db import accounts_table, categories_table, transactions_table
 
 class FakeProducer:
     def __init__(self):
-        self.sent: list[tuple[str, bytes, bytes | None]] = []
+        self.sent: list[tuple[str, bytes, bytes | None, list[tuple[str, bytes]] | None]] = []
 
-    async def send_and_wait(self, topic, value, key=None):
-        self.sent.append((topic, value, key))
+    async def send_and_wait(self, topic, value, key=None, headers=None):
+        self.sent.append((topic, value, key, headers))
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ async def test_process_message_categorizes_and_publishes_enriched_event(session_
     await process_message(to_json_bytes(event), session_factory, producer, redis_client, settings)
 
     assert len(producer.sent) == 1
-    topic, value, key = producer.sent[0]
+    topic, value, key, _headers = producer.sent[0]
     assert topic == "transactions.enriched"
     assert key == str(user_id).encode()
     enriched = json.loads(value)

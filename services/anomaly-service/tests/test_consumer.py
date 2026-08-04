@@ -10,10 +10,10 @@ from app.db import accounts_table, alerts_table, transactions_table
 
 class FakeProducer:
     def __init__(self):
-        self.sent: list[tuple[str, bytes, bytes | None]] = []
+        self.sent: list[tuple[str, bytes, bytes | None, list[tuple[str, bytes]] | None]] = []
 
-    async def send_and_wait(self, topic, value, key=None):
-        self.sent.append((topic, value, key))
+    async def send_and_wait(self, topic, value, key=None, headers=None):
+        self.sent.append((topic, value, key, headers))
 
 
 async def _insert_account(session, account_id, user_id):
@@ -67,7 +67,7 @@ async def test_process_message_raises_and_publishes_a_duplicate_charge_alert(ses
 
     assert raised == 1
     assert len(producer.sent) == 1
-    topic, value, _key = producer.sent[0]
+    topic, value, _key, _headers = producer.sent[0]
     assert topic == "alerts.raised"
     alert = json.loads(value)
     assert alert["alert_type"] == "duplicate_charge"
@@ -136,5 +136,5 @@ async def test_a_transaction_can_raise_multiple_distinct_alert_types_from_one_ev
     raised = await process_message(payload, session_factory, producer)
 
     assert raised == 2  # duplicate_charge AND spend_spike, both from one event
-    published_types = {json.loads(v)["alert_type"] for _, v, _ in producer.sent}
+    published_types = {json.loads(v)["alert_type"] for _, v, _, _ in producer.sent}
     assert published_types == {"duplicate_charge", "spend_spike"}

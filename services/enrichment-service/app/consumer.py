@@ -13,6 +13,7 @@ from app.db import (
     get_category_id_by_name,
     set_transaction_category,
 )
+from app.tracing import inject_trace_headers
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,13 @@ RECURRING_THRESHOLD = 2
 
 
 class KafkaProducer(Protocol):
-    async def send_and_wait(self, topic: str, value: bytes, key: bytes | None = None) -> None: ...
+    async def send_and_wait(
+        self,
+        topic: str,
+        value: bytes,
+        key: bytes | None = None,
+        headers: list[tuple[str, bytes]] | None = None,
+    ) -> None: ...
 
 
 async def process_message(
@@ -77,6 +84,10 @@ async def process_message(
         category_name=category_name if category_id is not None else None,
         is_recurring=is_recurring,
     )
+    trace_headers = inject_trace_headers()
     await producer.send_and_wait(
-        Topics.TRANSACTIONS_ENRICHED, value=to_json_bytes(enriched), key=str(event.user_id).encode()
+        Topics.TRANSACTIONS_ENRICHED,
+        value=to_json_bytes(enriched),
+        key=str(event.user_id).encode(),
+        headers=[(k, v.encode()) for k, v in trace_headers.items()] or None,
     )

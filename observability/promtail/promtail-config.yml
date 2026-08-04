@@ -1,0 +1,51 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Guards against a shared Docker daemon running sibling projects —
+      # only tail containers that belong to this compose project.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        regex: "meridian-rebuild"
+        action: keep
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: "container"
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: "service"
+    pipeline_stages:
+      # Every service's own log lines are structured JSON (see
+      # apps/core-api/app/core/logging.py and each worker's
+      # app/logging_config.py) whenever stdout isn't a TTY — which is
+      # always true here, running under Docker. Parsing it here is what
+      # actually makes the Tempo→Loki "trace to logs" datasource link
+      # (grafana/provisioning/datasources/datasources.yml) work: without
+      # this, trace_id/span_id are just text inside the line, not a
+      # field Loki can filter or the link can pass through.
+      - json:
+          expressions:
+            level: level
+            trace_id: trace_id
+            span_id: span_id
+      - labels:
+          level:
+      # trace_id/span_id deliberately become structured metadata, not
+      # labels — a label is a Loki index dimension, and trace_id's
+      # cardinality (one per request) would blow that index up. Loki
+      # 3.x's structured metadata is exactly the "queryable but not
+      # indexed as a label" middle ground this needs (loki-config.yml
+      # sets allow_structured_metadata: true for it).
+      - structured_metadata:
+          trace_id:
+          span_id:

@@ -7,8 +7,15 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "meridian-core-api"
+    service_version: str = "0.1.0"
     environment: str = "development"
     log_level: str = "INFO"
+
+    # Opt-in — empty by default so a plain `pytest` run or a laptop
+    # without the observability stack running never depends on it.
+    # Points directly at Tempo's OTLP/http receiver, no collector in
+    # between (see docs/adr/0010-direct-otlp-export-no-collector.md).
+    otel_exporter_otlp_endpoint: str = ""
 
     database_url: str = "postgresql+asyncpg://meridian:meridian@localhost:5433/meridian"
 
