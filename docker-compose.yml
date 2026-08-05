@@ -82,6 +82,11 @@ services:
       ENVIRONMENT: development
       CORS_ORIGINS: http://localhost:3000
       OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+      PLAID_CLIENT_ID: ${PLAID_CLIENT_ID:-}
+      PLAID_SECRET: ${PLAID_SECRET:-}
+      PLAID_ENV: ${PLAID_ENV:-sandbox}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      MARKET_DATA_API_KEY: ${MARKET_DATA_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
@@ -142,6 +147,23 @@ services:
         condition: service_healthy
       redpanda-topics:
         condition: service_completed_successfully
+
+  # Scheduled poller, not a Kafka consumer — no depends_on redpanda-topics
+  # the way the other three services have, since it doesn't touch Kafka
+  # at all (see docs/adr/0014-market-data-service-no-kafka-topic.md).
+  market-data-service:
+    build:
+      context: .
+      dockerfile: services/market-data-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://meridian:meridian@postgres:5432/meridian
+      ENVIRONMENT: development
+      MARKET_DATA_API_KEY: ${MARKET_DATA_API_KEY:-}
+      MARKET_DATA_BASE_URL: https://api.twelvedata.com
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   tempo:
     image: grafana/tempo:2.6.1

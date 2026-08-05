@@ -28,6 +28,7 @@ flowchart TB
     Enrichment["enrichment-service"]
     Anomaly["anomaly-service"]
     Notification["notification-service"]
+    MarketDataService["market-data-service<br/>(scheduled poller,<br/>no Kafka topic)"]
 
     Plaid["Plaid API"]
     OpenAI["OpenAI API"]
@@ -60,6 +61,9 @@ flowchart TB
     Notification -->|"PUBLISH"| Redis
     Redis -->|"SUBSCRIBE"| API
     API -->|"WS push"| Browser
+
+    MarketDataService <-->|"read tracked symbols,<br/>write latest_price_minor"| Postgres
+    MarketDataService -.->|"httpx, batched"| MarketData
 ```
 
 Every arrow into Postgres from `core-api` and every consumer service
@@ -68,7 +72,10 @@ shared ORM model — a documented shared-database tradeoff, not an
 accident (ADR-0007). The dotted lines to Plaid/OpenAI/market-data are
 all optional integrations that degrade gracefully (a typed 503, or a
 deterministic fallback) when unconfigured — see "External integration
-behavior" in the root README.
+behavior" in the root README. `market-data-service` has no edge to
+Kafka at all — deliberately, since nothing consumes a `prices.updated`
+event today (ADR-0014); it reads and writes Postgres directly on its
+own schedule, independent of `core-api`'s on-demand refresh endpoint.
 
 ## Event pipeline: one request, one trace, four services
 
