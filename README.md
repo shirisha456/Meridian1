@@ -119,6 +119,16 @@ and anomaly detection don't block the request that created them.
   still gets created in well under a second with Redpanda down, since
   the transactional outbox (ADR-0005) never makes a synchronous Kafka
   call — see [`docs/phase13.md`](docs/phase13.md)
+- Real infrastructure-as-code (two Terraform environments, two Helm
+  charts) with a CI job that actually validates it on every push — a
+  gap the reference had no CI coverage for at all — paired with an
+  explicit, permanent record of what "validated" does and doesn't mean
+  here: never applied against real AWS, by design, not by oversight.
+  The one instance size this project actually recommends deploying to
+  was chosen from real `docker stats` measurements of its own stack, not
+  a guess — see [ADR-0011](docs/adr/0011-terraform-written-not-applied.md),
+  [ADR-0012](docs/adr/0012-single-ec2-instance-sizing.md), and
+  [`docs/phase14.md`](docs/phase14.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -197,9 +207,9 @@ meridian/
 ├── web/                    Next.js dashboard — TanStack Query, Zustand, Base UI (Phase 11)
 ├── docs/                   Architecture docs, case study, ADRs, per-phase notes
 ├── observability/          Prometheus/Grafana/Loki/Promtail/Tempo config (Phase 12)
-├── infra/                  Terraform + Helm (added Phase 14)
+├── infra/                  Terraform + Helm — written and validated, never applied (Phase 14)
 ├── chaos/                  Chaos/recovery tests (Phase 13)
-├── deploy/                 Production compose, nginx, backup/restore scripts (added Phase 14)
+├── deploy/                 Production compose, nginx, backup/restore scripts (Phase 14)
 ├── docker-compose.yml      Local stack (infra-only until later phases add services)
 └── README.md
 ```
@@ -222,7 +232,7 @@ meridian/
 | 11 | Frontend | Complete | `feat: add Next.js dashboard frontend` |
 | 12 | Observability | Complete | `feat: add tracing metrics and log aggregation` |
 | 13 | Resilience and chaos testing | Complete | `feat: add chaos testing and resilience validation` |
-| 14 | Infrastructure and CI/CD | Planned | |
+| 14 | Infrastructure and CI/CD | Complete | `feat: add infrastructure as code and deployment automation` |
 | 15 | Portfolio documentation | Planned | |
 
 Each phase's design decisions and verification checklist:
@@ -232,7 +242,8 @@ Each phase's design decisions and verification checklist:
 [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
 [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
 [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md),
-[`docs/phase12.md`](docs/phase12.md), [`docs/phase13.md`](docs/phase13.md)
+[`docs/phase12.md`](docs/phase12.md), [`docs/phase13.md`](docs/phase13.md),
+[`docs/phase14.md`](docs/phase14.md)
 (others added as their phases land).
 
 ## Local development setup
@@ -448,11 +459,48 @@ onward), matching the reference implementation's own CI scope. A
 seventh job, `chaos-smoke-test` (gated to pushes on `main`, since it
 needs a full `docker compose up --build` and deliberately kills/restarts
 containers — too slow for every PR), runs both scripts under `chaos/`
-against the real stack — see [`docs/phase13.md`](docs/phase13.md).
+against the real stack — see [`docs/phase13.md`](docs/phase13.md). An
+eighth job, `infra-validate`, runs `terraform fmt -check`/`validate`
+against every module and both environments under `infra/terraform/`,
+and `helm lint`/`template` against both charts (including all three
+`worker` per-service values files) — genuine static validation the
+reference's CI never had at all; see
+[`docs/phase14.md`](docs/phase14.md) and
+[ADR-0011](docs/adr/0011-terraform-written-not-applied.md) for exactly
+what that validation does and doesn't prove.
 
 ## Infrastructure summary
 
-Added in Phase 14.
+**Written and statically validated, never applied to real cloud
+infrastructure** — see [ADR-0011](docs/adr/0011-terraform-written-not-applied.md)
+for the full, explicit accounting of what that does and doesn't prove.
+
+- `infra/terraform/envs/dev` — VPC, EKS (managed node group + IRSA),
+  RDS Postgres, ElastiCache Redis, and an S3 archival bucket. The "how a
+  real team would run this on Kubernetes" design; never `apply`'d.
+- `infra/terraform/envs/single-ec2` — one EC2 instance (`t3.large`,
+  sized from real `docker stats` measurements — see
+  [ADR-0012](docs/adr/0012-single-ec2-instance-sizing.md)), SSM-only
+  access (no SSH key, no open port 22), an AWS Budgets tripwire, and
+  optional Route 53. **This is the environment actually meant to be
+  applied** — see [`deploy/README.md`](deploy/README.md) for the full
+  runbook (first deploy, HTTPS via Let's Encrypt, backups, rollback,
+  total-loss recovery, teardown).
+- `infra/helm/core-api` and `infra/helm/worker` — Helm charts for the
+  `dev` EKS environment; `worker` is one chart reused via a
+  `values-<service>.yaml` file per consumer service, with KEDA
+  Kafka-lag-based autoscaling for enrichment-service/anomaly-service and
+  a fixed replica count for notification-service.
+- `deploy/docker-compose.prod.yml` — the production compose file for the
+  single-EC2 path: only nginx exposes host ports, every service has a
+  memory/CPU limit derived from real measurements, and secrets come from
+  a hand-created `/opt/meridian/secrets.env` (see
+  `deploy/secrets.env.example`), never from Terraform state or a
+  committed file.
+
+See [`docs/phase14.md`](docs/phase14.md) for the full verification
+checklist — every `terraform validate`/`fmt`, `helm lint`/`template`
+command that was actually run, and its result.
 
 ## Known limitations
 
@@ -508,14 +556,19 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   [0009](docs/adr/0009-no-popup-close-animations.md) no popup close
   animations,
   [0010](docs/adr/0010-direct-otlp-export-no-collector.md) direct OTLP
-  export, no Collector
+  export, no Collector,
+  [0011](docs/adr/0011-terraform-written-not-applied.md) Terraform
+  written, not applied,
+  [0012](docs/adr/0012-single-ec2-instance-sizing.md) single-EC2
+  instance sizing
 - [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
   [`docs/phase2.md`](docs/phase2.md), [`docs/phase3.md`](docs/phase3.md),
   [`docs/phase4.md`](docs/phase4.md), [`docs/phase5.md`](docs/phase5.md),
   [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
   [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
   [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md),
-  [`docs/phase12.md`](docs/phase12.md), [`docs/phase13.md`](docs/phase13.md) —
+  [`docs/phase12.md`](docs/phase12.md), [`docs/phase13.md`](docs/phase13.md),
+  [`docs/phase14.md`](docs/phase14.md) —
   per-phase design notes and verification checklists
 
 ## Demo instructions

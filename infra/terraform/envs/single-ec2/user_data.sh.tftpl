@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Bootstrap only — this does NOT clone the repo or start the app. That
+# happens by hand over an SSM Session Manager connection (no SSH key,
+# no open port 22 — see the security group and IAM role in main.tf),
+# documented step by step in deploy/README.md. Splitting it this way
+# means `terraform apply` never needs a git token, a deploy key, or any
+# app secret baked into an EC2 launch template.
+
+apt-get update
+apt-get install -y ca-certificates curl gnupg git
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  > /etc/apt/sources.list.d/docker.list
+
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Backstop log rotation for any container that doesn't set its own
+# logging driver/options (the production compose file's x-logging
+# anchor covers the ones that matter — this is the floor underneath it).
+cat > /etc/docker/daemon.json <<'JSON'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+JSON
+
+systemctl enable docker
+systemctl restart docker
+usermod -aG docker ubuntu
+
+# Cheap OOM insurance — uses already-provisioned EBS space, no extra
+# cost. See docs/adr/0012-single-ec2-instance-sizing.md.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo "/swapfile none swap sw 0 0" >> /etc/fstab
+fi
+
+# Already preinstalled on Canonical's AMI — just make sure it's running.
+snap start amazon-ssm-agent || systemctl restart snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+
+mkdir -p /opt/meridian
+chown ubuntu:ubuntu /opt/meridian
+
+echo "Bootstrap complete. Connect via SSM Session Manager to clone the repo and deploy (see deploy/README.md)." \
+  > /var/log/meridian-bootstrap-done

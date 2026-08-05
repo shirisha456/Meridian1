@@ -1,0 +1,14 @@
+# helm install notification-service ./worker -f values-notification.yaml \
+#   --set image.repository=<ecr-url>/meridian-notification-service
+#
+# Fixed replica count, not KEDA — this service fans out to Redis
+# Pub/Sub, not a downstream Kafka topic other services scale against,
+# and it consumes two topics (alerts.raised, insights.generated) under
+# one consumer group, which doesn't map cleanly onto KEDA's
+# single-topic-per-trigger Kafka scaler anyway. Its throughput tracks
+# alert/insight volume closely enough that 2 replicas covers it.
+
+nameOverride: notification-service
+httpPort: 8082
+existingSecretName: notification-service-secrets
+replicaCount: 2

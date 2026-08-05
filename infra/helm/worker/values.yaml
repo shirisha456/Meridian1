@@ -1,0 +1,42 @@
+nameOverride: ""
+replicaCount: 1
+
+image:
+  repository: ""
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# One http.server per worker serves both /health and /metrics on this
+# port (see e.g. services/enrichment-service/app/health.py) — one port
+# doing both jobs, not a separate metrics-only port with no health
+# endpoint next to it.
+httpPort: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+env: {}
+existingSecretName: ""
+
+serviceAccount:
+  create: true
+  eksRoleArn: ""
+
+# Requires the KEDA operator pre-installed on the cluster — off by
+# default. An I/O-bound consumer waiting on Postgres/OpenAI can have
+# near-zero CPU with a huge backlog, so CPU-based HPA wouldn't catch it;
+# scaling on actual Kafka consumer-group lag is the only trigger that
+# reflects the real bottleneck for this shape of service.
+keda:
+  enabled: false
+  kafkaBootstrapServers: redpanda.meridian.svc.cluster.local:9092
+  consumerGroup: ""
+  topic: ""
+  lagThreshold: 50
+  minReplicas: 1
+  maxReplicas: 10

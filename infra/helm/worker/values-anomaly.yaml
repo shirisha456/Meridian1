@@ -1,0 +1,14 @@
+# helm install anomaly-service ./worker -f values-anomaly.yaml \
+#   --set image.repository=<ecr-url>/meridian-anomaly-service
+
+nameOverride: anomaly-service
+httpPort: 8081
+existingSecretName: anomaly-service-secrets
+
+keda:
+  enabled: true
+  consumerGroup: anomaly-service
+  topic: transactions.enriched
+  lagThreshold: 50
+  minReplicas: 1
+  maxReplicas: 6

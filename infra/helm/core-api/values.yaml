@@ -1,0 +1,62 @@
+replicaCount: 2
+
+image:
+  # Set via --set image.repository=<ecr-url>/meridian-core-api at install time.
+  repository: ""
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8000
+
+serviceAccount:
+  create: true
+  # Filled from Terraform's core_api_irsa_role_arn output — activates
+  # IRSA for this pod (see infra/terraform/modules/iam).
+  eksRoleArn: ""
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+
+ingress:
+  enabled: true
+  # Assumes the AWS Load Balancer Controller is installed on the
+  # cluster — not nginx-ingress. No tls: block here deliberately; TLS
+  # termination happens at the ALB via annotations/ACM, not in-chart.
+  className: alb
+  host: api.meridian.example.com
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+
+# Non-secret env only. Actual secrets (DATABASE_URL, JWT_SECRET,
+# ENCRYPTION_KEY, PLAID_SECRET, OPENAI_API_KEY, ...) are deliberately
+# NOT templated as a Helm Secret resource — so `helm template` can never
+# print one — they must exist as a pre-created Kubernetes Secret named
+# by existingSecretName below.
+env:
+  ENVIRONMENT: production
+  CORS_ORIGINS: https://app.meridian.example.com
+
+existingSecretName: core-api-secrets
+
+livenessProbe:
+  path: /live
+  initialDelaySeconds: 10
+  periodSeconds: 15
+
+readinessProbe:
+  path: /ready
+  initialDelaySeconds: 5
+  periodSeconds: 10

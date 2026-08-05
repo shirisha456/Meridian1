@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "worker.name" . }}
+  labels:
+    {{- include "worker.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.keda.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "worker.selectorLabels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.httpPort }}"
+        checksum/config: {{ .Values.env | toYaml | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "worker.name" . }}
+      containers:
+        - name: {{ include "worker.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.httpPort }}
+          {{- if .Values.existingSecretName }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecretName }}
+          {{- end }}
+          env:
+            - name: HEALTH_CHECK_PORT
+              value: {{ .Values.httpPort | quote }}
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          # A consumer that's still serving /health is, by definition,
+          # not deadlocked — no separate readiness probe: these are
+          # background consumers with no traffic to gate on readiness,
+          # unlike core-api.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15

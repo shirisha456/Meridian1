@@ -1,0 +1,22 @@
+# helm install enrichment-service ./worker -f values-enrichment.yaml \
+#   --set image.repository=<ecr-url>/meridian-enrichment-service
+
+nameOverride: enrichment-service
+httpPort: 8080
+existingSecretName: enrichment-service-secrets
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+keda:
+  enabled: true
+  consumerGroup: enrichment-service
+  topic: transactions.ingested
+  lagThreshold: 50
+  minReplicas: 1
+  maxReplicas: 8
