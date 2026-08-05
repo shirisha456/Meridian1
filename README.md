@@ -6,11 +6,13 @@ tracking, an event-driven pipeline (Kafka/Redpanda) that categorizes
 transactions and detects anomalies in real time, AI-generated monthly
 insights, and full observability across the async pipeline.
 
-This repository is being rebuilt from an earlier version in incremental,
-reviewed phases — see [Development phases](#development-phases) below.
-Every phase's design decisions live in its own doc under `docs/`, and
-every architectural decision worth remembering has an ADR under
-[`docs/adr/`](docs/adr/).
+This repository was rebuilt from an earlier version in 16 incremental,
+reviewed phases — see [Development phases](#development-phases) below,
+all complete. Every phase's design decisions live in its own doc under
+`docs/`, and every architectural decision worth remembering has an ADR
+under [`docs/adr/`](docs/adr/). Start with
+[`docs/case-study.md`](docs/case-study.md) for the short version, or
+[`docs/architecture.md`](docs/architecture.md) for the system diagrams.
 
 ## Problem this solves
 
@@ -178,9 +180,10 @@ _More added as each phase lands._
 
 ## Architecture
 
-See [`docs/architecture.md`](docs/architecture.md) (added starting Phase 1,
-completed in Phase 15) for system diagrams, and the per-phase docs linked
-below for how each piece was built.
+See [`docs/architecture.md`](docs/architecture.md) for system diagrams
+(overall system, the event-pipeline sequence, auth flow, observability
+data flow, and both deployment topologies), and the per-phase docs
+linked below for how each piece was built.
 
 ## Technology stack
 
@@ -233,7 +236,7 @@ meridian/
 | 12 | Observability | Complete | `feat: add tracing metrics and log aggregation` |
 | 13 | Resilience and chaos testing | Complete | `feat: add chaos testing and resilience validation` |
 | 14 | Infrastructure and CI/CD | Complete | `feat: add infrastructure as code and deployment automation` |
-| 15 | Portfolio documentation | Planned | |
+| 15 | Portfolio documentation | Complete | `docs: add architecture, API, security, and demo documentation` |
 
 Each phase's design decisions and verification checklist:
 [`docs/phase0.md`](docs/phase0.md), [`docs/phase1.md`](docs/phase1.md),
@@ -243,8 +246,7 @@ Each phase's design decisions and verification checklist:
 [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
 [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md),
 [`docs/phase12.md`](docs/phase12.md), [`docs/phase13.md`](docs/phase13.md),
-[`docs/phase14.md`](docs/phase14.md)
-(others added as their phases land).
+[`docs/phase14.md`](docs/phase14.md), [`docs/phase15.md`](docs/phase15.md).
 
 ## Local development setup
 
@@ -538,10 +540,33 @@ Prometheus alerting rules, and Grafana runs with anonymous Admin access
 
 ## Future enhancements
 
-Tracked per-phase; a consolidated list is added in Phase 15.
+The full list with rationale is in
+[`docs/case-study.md`](docs/case-study.md#whats-next); in short:
+
+- Rate limiting on `/login` and `/register`.
+- A dead-letter topic for the three Kafka consumers (currently: log and
+  skip a permanently malformed message).
+- A Plaid webhook receiver (sync is user-triggered only today).
+- Off-box backup storage (`backup.sh` writes to the same volume it's
+  backing up).
+- A seeded demo dataset for a reviewer to explore without manually
+  creating data first.
+- Actually applying the Terraform once there's a real AWS account and
+  budget to test against — see
+  [ADR-0011](docs/adr/0011-terraform-written-not-applied.md) for exactly
+  what remains unverified until then.
 
 ## Documentation links
 
+- [`docs/case-study.md`](docs/case-study.md) — the portfolio narrative:
+  problem, architecture, tradeoffs, real performance data, lessons
+  learned, what's next
+- [`docs/architecture.md`](docs/architecture.md) — system diagrams
+- [`docs/api.md`](docs/api.md) — curated endpoint reference (the live
+  Swagger UI at `/docs` is the authoritative schema)
+- [`docs/security.md`](docs/security.md) — every security decision in
+  one place
+- [`docs/demo.md`](docs/demo.md) — a concrete walkthrough script
 - [`docs/adr/`](docs/adr/) — architecture decision records:
   [0001](docs/adr/0001-async-sqlalchemy.md) async SQLAlchemy,
   [0002](docs/adr/0002-fail-open-redis-dependencies.md) fail-open Redis,
@@ -568,9 +593,13 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
   [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md),
   [`docs/phase12.md`](docs/phase12.md), [`docs/phase13.md`](docs/phase13.md),
-  [`docs/phase14.md`](docs/phase14.md) —
+  [`docs/phase14.md`](docs/phase14.md), [`docs/phase15.md`](docs/phase15.md) —
   per-phase design notes and verification checklists
 
 ## Demo instructions
 
-Added in Phase 15 ([`docs/demo.md`](docs/demo.md)).
+See [`docs/demo.md`](docs/demo.md) — a concrete ~10-minute walkthrough:
+register, watch a transaction get categorized by the real pipeline,
+trigger a live-pushed alert, generate an insight, find the resulting
+trace in Tempo, and (optionally) run the chaos tests to see the
+resilience claims proven live.
