@@ -172,9 +172,20 @@ actually implemented today versus planned._
   refresh), net worth, Plaid linking, and live alerts/insights over the
   ticket-authenticated WebSocket (Phase 11)
 - Distributed tracing (OpenTelemetry → Tempo), metrics (Prometheus,
-  scraped from all four backend services), and structured JSON logs
+  scraped from all backend services), and structured JSON logs
   (Loki via Promtail), pre-wired in Grafana with a working dashboard and
   a functional trace-to-logs correlation (Phase 12)
+- Per-IP rate limiting on `/login` and `/register`, Redis-backed and
+  fail-open on a Redis outage — see
+  [ADR-0013](docs/adr/0013-per-ip-fixed-window-rate-limiting.md)
+- Cash-flow forecasting: projects the checking/savings/cash balance
+  forward from real recurring-transaction patterns detected directly in
+  Postgres (no ML, no guessing) — a merchant needs 3+ real occurrences
+  before it's projected forward at all
+- `market-data-service`: a scheduled poller pricing every tracked
+  security independently of the on-demand refresh endpoint, deliberately
+  built without a Kafka topic since nothing consumes one yet — see
+  [ADR-0014](docs/adr/0014-market-data-service-no-kafka-topic.md)
 
 _More added as each phase lands._
 
@@ -205,7 +216,8 @@ meridian/
 ├── services/
 │   ├── enrichment-service/   Categorizes transactions.ingested → transactions.enriched (Phase 8)
 │   ├── anomaly-service/       Detects anomalies → alerts.raised, idempotent (Phase 9)
-│   └── notification-service/  Fans out alerts.raised/insights.generated → Redis pub/sub (Phase 9)
+│   ├── notification-service/  Fans out alerts.raised/insights.generated → Redis pub/sub (Phase 9)
+│   └── market-data-service/   Scheduled poller pricing every tracked security, no Kafka topic (ADR-0014)
 ├── libs/events/             Shared event contracts — a real installable package (Phase 7)
 ├── web/                    Next.js dashboard — TanStack Query, Zustand, Base UI (Phase 11)
 ├── docs/                   Architecture docs, case study, ADRs, per-phase notes
@@ -247,6 +259,27 @@ Each phase's design decisions and verification checklist:
 [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md),
 [`docs/phase12.md`](docs/phase12.md), [`docs/phase13.md`](docs/phase13.md),
 [`docs/phase14.md`](docs/phase14.md), [`docs/phase15.md`](docs/phase15.md).
+
+### Post-phase-15 additions
+
+Three real gaps closed after the phase-15 documentation pass — each one
+was either a self-documented known gap or an explicitly deferred piece
+of the original scope, not something newly discovered by accident:
+
+- **Rate limiting on `/login`/`/register`** — was listed under
+  `docs/security.md`'s "known gaps" since Phase 2; closed with a
+  Redis-backed, fail-open, per-IP limiter. See
+  [ADR-0013](docs/adr/0013-per-ip-fixed-window-rate-limiting.md).
+- **Cash-flow forecasting** — projects the checking/savings/cash balance
+  forward from real recurring-transaction patterns. No dedicated ADR
+  (no architectural tradeoff worth recording beyond what's already in
+  `apps/core-api/app/forecast/service.py`'s own docstrings); see
+  `apps/core-api/tests/test_forecast.py` for the verified behavior.
+- **`market-data-service`** — the standalone poller `docs/phase5.md`
+  and `docs/phase7.md` both flagged as real future work once the event
+  pipeline existed. Built as a scheduled poller, deliberately without a
+  Kafka topic — see
+  [ADR-0014](docs/adr/0014-market-data-service-no-kafka-topic.md).
 
 ## Local development setup
 
@@ -506,7 +539,7 @@ command that was actually run, and its result.
 
 ## Known limitations
 
-No rate limiting on `/login` or `/register` yet. The insights feature's
+The insights feature's
 AI summary path (`ai_summary()`) has not been exercised against the real
 OpenAI API in this project — no key has been configured in any test or
 local environment used so far; only the deterministic template fallback
@@ -517,10 +550,7 @@ logged and skipped, an accepted, documented gap (see
 [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md)).
 Redis Pub/Sub notifications have no persistence — a live alert missed
 while disconnected isn't redelivered over the WebSocket, though it's
-still visible via `GET /api/v1/alerts` (the system of record). Market
-data is synchronous/on-demand, not the scheduled poller the reference
-implementation has — see [`docs/phase5.md`](docs/phase5.md) for why and
-when that changes. No Plaid webhook receiver — sync is user-triggered
+still visible via `GET /api/v1/alerts` (the system of record). No Plaid webhook receiver — sync is user-triggered
 only (see [`docs/phase6.md`](docs/phase6.md)). The budgets-goals-networth
 upsert operations have a documented, accepted race condition under truly
 concurrent identical requests (see [`docs/phase4.md`](docs/phase4.md)) —
@@ -543,7 +573,6 @@ Prometheus alerting rules, and Grafana runs with anonymous Admin access
 The full list with rationale is in
 [`docs/case-study.md`](docs/case-study.md#whats-next); in short:
 
-- Rate limiting on `/login` and `/register`.
 - A dead-letter topic for the three Kafka consumers (currently: log and
   skip a permanently malformed message).
 - A Plaid webhook receiver (sync is user-triggered only today).
