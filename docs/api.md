@@ -86,6 +86,12 @@ same envelope: `{"error": {"type", "message", "details"}}` — see
 | GET | `` | History (`?days=`, default 90) — cached, point-in-time snapshots |
 | POST | `/recompute` | Recompute today's snapshot from current accounts/holdings |
 
+## Forecast (`/api/v1/forecast`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `` | Cash-flow projection (`?horizon_days=`, default 30, max 180) — starting balance, projected daily balance, and the recurring transactions it's grounded in |
+
 ## Investments (`/api/v1/investments`)
 
 | Method | Path | Purpose |

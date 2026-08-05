@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/goals", label: "Goals" },
   { href: "/dashboard/investments", label: "Investments" },
   { href: "/dashboard/networth", label: "Net Worth" },
+  { href: "/dashboard/forecast", label: "Forecast" },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

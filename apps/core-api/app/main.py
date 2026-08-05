@@ -18,6 +18,7 @@ from app.core.logging import configure_logging
 from app.core.outbox_publisher import run_outbox_publisher_loop
 from app.core.tracing import setup_tracing
 from app.errors import register_exception_handlers
+from app.forecast.router import router as forecast_router
 from app.goals.router import router as goals_router
 from app.health.router import router as health_router
 from app.insights.router import router as insights_router
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(alerts_router)
     app.include_router(notifications_router)
     app.include_router(insights_router)
+    app.include_router(forecast_router)
 
     return app
 

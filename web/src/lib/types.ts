@@ -135,6 +135,30 @@ export interface NetWorthSnapshot {
   created_at: string;
 }
 
+export interface RecurringItem {
+  merchant_name: string;
+  category_name: string | null;
+  average_amount_minor: number;
+  occurrences: number;
+  average_interval_days: number;
+  last_seen: string;
+  next_expected_date: string;
+}
+
+export interface ForecastPoint {
+  date: string;
+  projected_balance_minor: number;
+}
+
+export interface ForecastResponse {
+  as_of: string;
+  horizon_days: number;
+  starting_balance_minor: number;
+  projected_ending_balance_minor: number;
+  recurring_items: RecurringItem[];
+  daily_projection: ForecastPoint[];
+}
+
 export type AlertType = "duplicate_charge" | "spend_spike" | "subscription_price_increase";
 export type AlertSeverity = "info" | "warning" | "critical";
 
