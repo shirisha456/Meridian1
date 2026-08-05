@@ -157,3 +157,45 @@ jobs:
         # covered manually per-phase (see docs/phase11.md), same scope
         # boundary as this CI's Redpanda-round-trip gap for the backend.
         run: npm run build
+
+  chaos-smoke-test:
+    runs-on: ubuntu-latest
+    needs: [backend, enrichment-service, anomaly-service, notification-service]
+    # Needs the full docker-compose stack (Postgres, Redpanda, all three
+    # consumer services) and deliberately kills/restarts containers —
+    # worth running on main, too slow/heavy to gate every PR on.
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the stack
+        run: |
+          cp .env.example .env
+          cp apps/core-api/.env.example apps/core-api/.env
+          # A CI-only encryption key — this stack is torn down at the end of the job.
+          echo "ENCRYPTION_KEY=$(python3 -c 'import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')" >> apps/core-api/.env
+          docker compose up -d --build postgres redis redpanda redpanda-topics core-api enrichment-service anomaly-service notification-service
+          docker compose ps
+
+      - name: Wait for core-api to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/health && exit 0
+            sleep 2
+          done
+          echo "core-api never became healthy" && exit 1
+
+      - name: Run the consumer-crash chaos test
+        run: python3 chaos/test_enrichment_recovery.py
+
+      - name: Run the broker-outage chaos test
+        run: python3 chaos/test_outbox_broker_outage.py
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --tail 100
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

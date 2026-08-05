@@ -111,6 +111,14 @@ and anomaly detection don't block the request that created them.
   rebuild's structured JSON logs do, verified with real trace and log
   data pulled directly from Tempo's and Loki's own APIs, not just
   code review — see [`docs/phase12.md`](docs/phase12.md)
+- Two chaos tests proving this architecture's resilience claims against
+  the real running stack, not just by reasoning about the code: killing
+  `enrichment-service` mid-pipeline loses no data (Kafka consumer-group
+  offsets pick up exactly where it left off), and stopping the Kafka
+  broker itself doesn't touch the request path at all — a transaction
+  still gets created in well under a second with Redpanda down, since
+  the transactional outbox (ADR-0005) never makes a synchronous Kafka
+  call — see [`docs/phase13.md`](docs/phase13.md)
 
 _More added as each phase lands — see the phase table below for what's
 actually implemented today versus planned._
@@ -190,7 +198,7 @@ meridian/
 ├── docs/                   Architecture docs, case study, ADRs, per-phase notes
 ├── observability/          Prometheus/Grafana/Loki/Promtail/Tempo config (Phase 12)
 ├── infra/                  Terraform + Helm (added Phase 14)
-├── chaos/                  Chaos/recovery tests (added Phase 13)
+├── chaos/                  Chaos/recovery tests (Phase 13)
 ├── deploy/                 Production compose, nginx, backup/restore scripts (added Phase 14)
 ├── docker-compose.yml      Local stack (infra-only until later phases add services)
 └── README.md
@@ -213,7 +221,7 @@ meridian/
 | 10 | AI financial insights | Complete | `feat: add grounded monthly financial insights` |
 | 11 | Frontend | Complete | `feat: add Next.js dashboard frontend` |
 | 12 | Observability | Complete | `feat: add tracing metrics and log aggregation` |
-| 13 | Resilience and chaos testing | Planned | |
+| 13 | Resilience and chaos testing | Complete | `feat: add chaos testing and resilience validation` |
 | 14 | Infrastructure and CI/CD | Planned | |
 | 15 | Portfolio documentation | Planned | |
 
@@ -224,7 +232,7 @@ Each phase's design decisions and verification checklist:
 [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
 [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
 [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md),
-[`docs/phase12.md`](docs/phase12.md)
+[`docs/phase12.md`](docs/phase12.md), [`docs/phase13.md`](docs/phase13.md)
 (others added as their phases land).
 
 ## Local development setup
@@ -431,14 +439,16 @@ its own), `backend` (installs `libs/events` then `apps/core-api`, runs
 then itself, runs its own test suite and lint), and `frontend`
 (`npm ci`, `tsc --noEmit`, `eslint .`, `npm run build` — no test suite
 yet, matching the reference; see [`docs/phase11.md`](docs/phase11.md)).
-None of the five backend jobs spin up a real Redpanda service
-container — the outbox/Kafka tests all use a fake producer/consumer;
-the real-broker round-trip (including, from Phase 9, all four services
-running simultaneously against real Postgres/Redis/Redpanda) is
-verified manually each phase touching it (see
-[`docs/phase7.md`](docs/phase7.md) onward), matching the reference
-implementation's own CI scope. The gated chaos smoke test is added in
-the phase that introduces it.
+None of these five jobs spin up a real Redpanda service container — the
+outbox/Kafka tests all use a fake producer/consumer; the real-broker
+round-trip (including, from Phase 9, all four services running
+simultaneously against real Postgres/Redis/Redpanda) is verified
+manually each phase touching it (see [`docs/phase7.md`](docs/phase7.md)
+onward), matching the reference implementation's own CI scope. A
+seventh job, `chaos-smoke-test` (gated to pushes on `main`, since it
+needs a full `docker compose up --build` and deliberately kills/restarts
+containers — too slow for every PR), runs both scripts under `chaos/`
+against the real stack — see [`docs/phase13.md`](docs/phase13.md).
 
 ## Infrastructure summary
 
@@ -505,7 +515,7 @@ Tracked per-phase; a consolidated list is added in Phase 15.
   [`docs/phase6.md`](docs/phase6.md), [`docs/phase7.md`](docs/phase7.md),
   [`docs/phase8.md`](docs/phase8.md), [`docs/phase9.md`](docs/phase9.md),
   [`docs/phase10.md`](docs/phase10.md), [`docs/phase11.md`](docs/phase11.md),
-  [`docs/phase12.md`](docs/phase12.md) —
+  [`docs/phase12.md`](docs/phase12.md), [`docs/phase13.md`](docs/phase13.md) —
   per-phase design notes and verification checklists
 
 ## Demo instructions
