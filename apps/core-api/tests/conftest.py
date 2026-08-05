@@ -120,6 +120,12 @@ class BrokenRedis:
     async def delete(self, *args, **kwargs):
         raise RedisError("redis unreachable")
 
+    async def incr(self, *args, **kwargs):
+        raise RedisError("redis unreachable")
+
+    async def expire(self, *args, **kwargs):
+        raise RedisError("redis unreachable")
+
     def scan_iter(self, *args, **kwargs):
         async def _raise() -> AsyncGenerator[str, None]:
             raise RedisError("redis unreachable")

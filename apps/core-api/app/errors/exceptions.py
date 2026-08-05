@@ -42,6 +42,11 @@ class ServiceUnavailableError(AppError):
     error_type = "service_unavailable"
 
 
+class TooManyRequestsError(AppError):
+    status_code = 429
+    error_type = "too_many_requests"
+
+
 class UnprocessableError(AppError):
     """Distinct from Pydantic's own 422 (error_type="validation_error",
     app/errors/handlers.py::validation_error_handler): this is for a

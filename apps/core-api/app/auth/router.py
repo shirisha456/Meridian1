@@ -15,11 +15,19 @@ from app.auth.schemas import (
 )
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.core.rate_limit import RateLimiter
 from app.core.redis import get_redis
 from app.core.ws_tickets import TICKET_TTL_SECONDS, issue_ticket
 from app.errors import UnauthorizedError
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+# Per-IP, fixed-window (ADR-0013). Login gets a higher ceiling than
+# register — a shared office/NAT IP with several legitimate users logging
+# in within a minute is normal; five new account registrations from one
+# IP in a minute is not.
+_login_rate_limit = RateLimiter("login", limit=10, window_seconds=60)
+_register_rate_limit = RateLimiter("register", limit=5, window_seconds=60)
 
 REFRESH_COOKIE_NAME = "meridian_refresh_token"
 # Scoped to the auth prefix (not "/") so the refresh token — the one that
@@ -39,7 +47,12 @@ def _set_refresh_cookie(response: Response, refresh_token: str, settings: Settin
     )
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=AuthResponse)
+@router.post(
+    "/register",
+    status_code=status.HTTP_201_CREATED,
+    response_model=AuthResponse,
+    dependencies=[Depends(_register_rate_limit)],
+)
 async def register(
     body: RegisterRequest,
     response: Response,
@@ -52,7 +65,7 @@ async def register(
     return AuthResponse(access_token=tokens.access_token, user=UserResponse.model_validate(user))
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post("/login", response_model=AuthResponse, dependencies=[Depends(_login_rate_limit)])
 async def login(
     body: LoginRequest,
     response: Response,

@@ -4,6 +4,7 @@ from app.errors.exceptions import (
     ForbiddenError,
     NotFoundError,
     ServiceUnavailableError,
+    TooManyRequestsError,
     UnauthorizedError,
     UnprocessableError,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "ForbiddenError",
     "NotFoundError",
     "ServiceUnavailableError",
+    "TooManyRequestsError",
     "UnauthorizedError",
     "UnprocessableError",
     "register_exception_handlers",

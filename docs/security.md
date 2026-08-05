@@ -35,6 +35,11 @@ require reading fifteen separate documents to answer.
   default with no runtime check, so nothing stopped a misconfigured
   prod deploy from signing tokens with a value anyone reading this
   repo's history could see.
+- **Rate limiting on `/login` and `/register`**: a Redis-backed, per-IP,
+  fixed-window limiter (5 requests/min for register, 10/min for login) —
+  fails open on a Redis outage rather than locking out the single most
+  critical path in the app (ADR-0002) — see
+  [ADR-0013](adr/0013-per-ip-fixed-window-rate-limiting.md).
 
 ## Authorization
 
@@ -126,8 +131,6 @@ require reading fifteen separate documents to answer.
 
 ## Known gaps (documented, not hidden)
 
-- **No rate limiting on `/login` or `/register`** — a real gap for a
-  production deployment; not implemented in this rebuild.
 - **No dead-letter queue** for any of the three Kafka-consuming
   services — a permanently malformed message is logged and skipped, an
   accepted tradeoff for this project's scale (`docs/phase8.md`,

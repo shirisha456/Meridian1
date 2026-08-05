@@ -133,7 +133,6 @@ measured data:
 
 ## What's next
 
-- Rate limiting on `/login` and `/register`.
 - A dead-letter topic for the three Kafka consumers (currently: log and
   skip a permanently malformed message).
 - A Plaid webhook receiver (sync is user-triggered only today).
